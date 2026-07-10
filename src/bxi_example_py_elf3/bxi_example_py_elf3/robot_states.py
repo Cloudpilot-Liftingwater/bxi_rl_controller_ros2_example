@@ -394,10 +394,38 @@ class MotionState(RobotControlState):
             )
 
 
+class BackFlipState(MotionState):
+    policy_attr = "back_flip"
+    finish_trigger = "back_flip_finished"
+    end_frame_trim = 30
+    end_transition = {
+        "base": "dual_running_blend",
+        "duration": 0.45,
+        "data": {
+            "curve": "linear",
+            "run_from": True,
+        },  # 过渡的时候模型继续推理，同时推理下一个模型
+    }
+
+
 class ForwardFlipState(MotionState):
     policy_attr = "forward_flip"
     finish_trigger = "forward_flip_finished"
     end_frame_trim = 125
+    end_transition = {
+        "base": "dual_running_blend",
+        "duration": 1.0,
+        "data": {
+            "curve": "smootherstep",
+            "run_from": True,
+        },  # 过渡的时候模型继续推理，同时推理下一个模型
+    }
+
+
+class BalletState(MotionState):
+    policy_attr = "ballet"
+    finish_trigger = "ballet_finished"
+    end_frame_trim = 330
     end_transition = {
         "base": "dual_running_blend",
         "duration": 1.0,
