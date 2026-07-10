@@ -1,3 +1,15 @@
+<!--
+  FILE ROLE / SOURCE OF TRUTH:
+  This is the official BXI ELF3 MuJoCo model for the ROS2 sim2sim path.
+  When sim2sim files or processes conflict, prefer this package:
+    /home/huangchenwei/ros2_ws/bxi_rl_controller_ros2_example-main/src/bxi_example_py_elf3/
+
+  This MJCF is a 29-DoF torque-motor model. It intentionally has no locked
+  head joints and no extra sensor bodies from the GR00T-side training/probe
+  MJCF. Map policy actions by joint name, not by raw MuJoCo/IsaacLab index
+  order. Do not overwrite GR00T training assets with this file while training
+  is running.
+-->
 <mujoco model="elf3">
   <compiler angle="radian" meshdir="./meshes/"/>
 

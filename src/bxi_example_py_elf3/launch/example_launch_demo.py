@@ -1,3 +1,16 @@
+"""Official ELF3 ROS2 sim2sim launch.
+
+FILE ROLE / SOURCE OF TRUTH:
+For ELF3 sim2sim, this BXI package is the authority when it conflicts with
+GR00T-side standalone smoke/probe files:
+  /home/huangchenwei/ros2_ws/bxi_rl_controller_ros2_example-main/src/bxi_example_py_elf3/
+
+This launch starts the official MuJoCo simulation node with
+``data/mujoco_simulation/elf3.xml`` and a controller node using the
+``simulation/`` topic prefix. Do not replace GR00T training assets to run this
+chain; keep sim2sim separate from training.
+"""
+
 import os
 from ament_index_python.packages import get_package_share_path
 from launch import LaunchDescription

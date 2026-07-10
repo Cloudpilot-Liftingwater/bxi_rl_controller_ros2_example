@@ -1,3 +1,15 @@
+"""Official ELF3 ROS2 MJLab controller demo.
+
+FILE ROLE / SOURCE OF TRUTH:
+This file is part of the official BXI ELF3 sim2sim package. When it conflicts
+with GR00T-side standalone MuJoCo smoke/probe scripts, prefer this package:
+  /home/huangchenwei/ros2_ws/bxi_rl_controller_ros2_example-main/src/bxi_example_py_elf3/
+
+This controller uses 29 named ELF3 actuators and the official ROS2 command
+interface. Policy integration should map actions by joint name and preserve
+the ``ActuatorCmds`` topic semantics.
+"""
+
 import rclpy
 from rclpy.node import Node
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup

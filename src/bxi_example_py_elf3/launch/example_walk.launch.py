@@ -1,3 +1,15 @@
+"""Official ELF3 ROS2 sim2sim walk launch.
+
+FILE ROLE / SOURCE OF TRUTH:
+This launch is part of the official BXI ELF3 sim2sim package. If sim2sim
+model/process files conflict with GR00T-side standalone probes, prefer:
+  /home/huangchenwei/ros2_ws/bxi_rl_controller_ros2_example-main/src/bxi_example_py_elf3/
+
+It starts the official MuJoCo simulation model and MJLab/walk controller with
+the ``simulation/`` topic prefix. Keep this separate from GR00T training
+assets.
+"""
+
 import os
 from ament_index_python.packages import get_package_share_path
 from launch import LaunchDescription

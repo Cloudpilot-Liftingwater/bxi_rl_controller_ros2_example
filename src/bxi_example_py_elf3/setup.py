@@ -54,6 +54,7 @@ setup(
     version='0.0.0',
     packages=[package_name,
               f'{package_name}.inference',
+              f'{package_name}.sonic_pico',
               f'{package_name}.utils',
               ],
     data_files=[
@@ -71,6 +72,8 @@ setup(
         'console_scripts': [
             'bxi_example_py_elf3_mjlab = bxi_example_py_elf3.bxi_example_mjlab:main',
             'bxi_example_py_elf3_demo = bxi_example_py_elf3.bxi_example_demo:main',
+            'sonic_pico_bridge = bxi_example_py_elf3.sonic_pico.pico_pose_to_smpl_ref_bridge:main',
+            'sonic_pico_manager_legacy = bxi_example_py_elf3.sonic_pico.pico_manager_legacy:main',
         ],
     },
 )

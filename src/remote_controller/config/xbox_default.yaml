@@ -81,6 +81,9 @@ sources:
       keyboard.hello:
         from: keyboard.key
         key: '9'
+      keyboard.sonic_teleop:
+        from: keyboard.key
+        key: '6'
 curves:
   stick:
     type: expo
@@ -196,6 +199,9 @@ controls:
   keyboard.hello_event:
     type: bool
     source: keyboard.hello
+  keyboard.sonic_teleop_event:
+    type: bool
+    source: keyboard.sonic_teleop
 outputs:
   conflict_policy: first_wins
   publish_on_change: true
@@ -285,6 +291,12 @@ outputs:
       - - trigger.right_event
         - button.a_event
       - - keyboard.hello_event
+  - output: btn_10=7
+    when:
+      any:
+      - - trigger.right_event
+        - button.x_event
+      - - keyboard.sonic_teleop_event
 system:
   start:
   - mkdir -p /var/log/bxi_log
