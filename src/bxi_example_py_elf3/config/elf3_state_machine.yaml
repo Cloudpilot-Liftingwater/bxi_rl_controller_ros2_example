@@ -1,9 +1,14 @@
+#程序初始的状态
 initial_state: zero_torque
+
+#状态机可视化输出
 graph:
   validate: true
   export:
     dot: /tmp/elf3_state_machine.dot
     mermaid: /tmp/elf3_state_machine.mmd
+
+#将MotionCommands映射为事件
 remote_events:
   normal_event:
     slot: btn_1
@@ -32,42 +37,66 @@ remote_events:
   toggle_dance_pause_event:
     slot: btn_9
     value: 1
+  back_flip_event:
+    slot: btn_10
+    value: 1
   forward_flip_event:
     slot: btn_10
     value: 2
+  ballet_event:
+    slot: btn_10
+    value: 3
   applause_event:
     slot: btn_10
     value: 5
   hello_event:
     slot: btn_10
     value: 6
+  sonic_teleop_event:
+    slot: btn_10
+    value: 7
+  sonic_teleop_gripper_event:
+    slot: btn_10
+    value: 8
+
+#预设的一些过度方式
 transition_profiles:
+
+  #直接切换状态，相当于不填transition
   instant:
     duration: 0.0
     exit_behavior: none
     enter_behavior: none
+
+  #软切换，会保持一段时间当前电机状态再切换下一状态
   soft_switch:
     duration: 0.02
     exit_behavior: hold_last_motor
     enter_behavior: hold_last_motor
+
+  #缓慢增加kp或kd过度到目标状态的第一帧
   first_frame_switch:
     exit_duration: 0.02
     enter_duration: 0.1
     exit_behavior: hold_last_motor
     enter_behavior: first_frame_ramp_kp
     data:
-      kp_start: zero
-      kd_start: target
+      kp_start: zero #kp从0开始过度到目标状态的kp
+      kd_start: target #kd从目标状态的kd开始过度
+
+  #旧状态和新状态都持续生成电机目标，再按进入进度混合输出
   dual_running_blend:
     duration: 0.3
     exit_behavior: none
     enter_behavior: dual_running_blend
     data:
       curve: smoothstep
-      run_from: true
-      run_to: true
+      run_from: true #是否采样当前状态电机
+      run_to: true #是否采样目标状态电机
       from_fallback: last_motor
       to_fallback: first_frame
+
+#速度的预设配置
 speed_profiles:
   normal:
     vx_scale: 1.0
@@ -75,18 +104,22 @@ speed_profiles:
     vx_max: 1.0
     vy_scale: 0.5
     yaw_scale: 1.5
+
   normal_run:
     vx_scale: 2.0
     vx_min: -1.0
     vx_max: 2.0
     vy_scale: 0.5
     yaw_scale: 1.0
+
   amp_run:
     vx_scale: 4.0
     vx_min: -2.0
     vx_max: 4.0
     vy_scale: 0.5
     yaw_scale: 1.5
+
+#状态机
 states:
   normal:
     manifest:
@@ -100,26 +133,38 @@ states:
       on_event:
         zero_torque_event: zero_torque
         pd_brake_event:
-          to: pd_brake
-          transition:
-            base: first_frame_switch
-            enter_duration: 1.0
+            to: pd_brake
+            transition:
+              base: first_frame_switch
+              enter_duration: 1.0
         initial_pos_event:
-          to: initial_pos
-          transition:
-            base: first_frame_switch
-            enter_duration: 1.0
+            to: initial_pos
+            transition:
+              base: first_frame_switch
+              enter_duration: 1.0
         amp_run_event:
           to: amp_run
           transition: soft_switch
         normal_run_event:
           to: normal_run
           transition: soft_switch
+        sonic_teleop_event:
+          to: sonic_teleop
+          transition: soft_switch
+        sonic_teleop_gripper_event:
+          to: sonic_teleop_gripper
+          transition: soft_switch
         dance_event:
           to: dance
           transition: soft_switch
+        back_flip_event:
+          to: back_flip
+          transition: soft_switch
         forward_flip_event:
           to: forward_flip
+          transition: soft_switch
+        ballet_event:
+          to: ballet
           transition: soft_switch
         applause_event:
           to: applause
@@ -127,6 +172,7 @@ states:
         hello_event:
           to: hello
           transition: dual_running_blend
+
   zero_torque:
     manifest:
       label: 零力矩
@@ -146,6 +192,7 @@ states:
           transition:
             base: first_frame_switch
             enter_duration: 1.0
+
   pd_brake:
     manifest:
       label: 初始姿态
@@ -169,6 +216,7 @@ states:
           transition:
             base: first_frame_switch
             enter_duration: 1.0
+
   initial_pos:
     manifest:
       label: 零位模式
@@ -184,6 +232,7 @@ states:
             base: first_frame_switch
             enter_duration: 1.0
         zero_torque_event: zero_torque
+
   dance:
     manifest:
       label: 跳舞
@@ -203,6 +252,35 @@ states:
         zero_torque_event: zero_torque
         toggle_dance_pause_event:
           action: toggle_dance_pause
+
+  sonic_teleop:
+    manifest:
+      label: SONIC遥操
+      index: 14
+      group: Advanced
+      icon: sports_esports
+      confirm: true
+      confirm_message: 进入后先保持idle_left站立；PICO按ABXY完成校准，再按A+X切入实时POSE
+    behavior: SonicTeleopState
+    params:
+      hardware_gripper: false
+    transitions:
+      on_event:
+        normal_event:
+          to: normal
+          transition: soft_switch
+        zero_torque_event: zero_torque
+        pd_brake_event:
+          to: pd_brake
+          transition:
+            base: first_frame_switch
+            enter_duration: 1.0
+        recover_event:
+          to: recover
+          transition: soft_switch
+        toggle_dance_pause_event:
+          action: reset_sonic_alignment
+
   recover:
     manifest:
       label: 起身
@@ -215,6 +293,7 @@ states:
     transitions:
       on_event:
         zero_torque_event: zero_torque
+
   amp_run:
     manifest:
       label: 高速奔跑
@@ -230,6 +309,13 @@ states:
         normal_event:
           to: normal
           transition: soft_switch
+        sonic_teleop_event:
+          to: sonic_teleop
+          transition: soft_switch
+        sonic_teleop_gripper_event:
+          to: sonic_teleop_gripper
+          transition: soft_switch
+
   normal_run:
     manifest:
       label: 中速奔跑
@@ -245,6 +331,26 @@ states:
         normal_event:
           to: normal
           transition: soft_switch
+        sonic_teleop_event:
+          to: sonic_teleop
+          transition: soft_switch
+        sonic_teleop_gripper_event:
+          to: sonic_teleop_gripper
+          transition: soft_switch
+
+  back_flip:
+    manifest:
+      label: 后空翻
+      index: 9
+      group: Advanced
+      icon: rotate_left
+      confirm: true
+      confirm_message: 请确保机器人后方3米范围内没有障碍物
+    behavior: BackFlipState
+    transitions:
+      on_event:
+        zero_torque_event: zero_torque
+
   forward_flip:
     manifest:
       label: 前空翻
@@ -257,6 +363,26 @@ states:
     transitions:
       on_event:
         zero_torque_event: zero_torque
+
+  ballet:
+    manifest:
+      label: 芭蕾舞
+      index: 11
+      group: Advanced
+      icon: wand_stars
+      confirm: true
+      confirm_message: 请确保机器人周围5米范围内没有障碍物
+    behavior: BalletState
+    transitions:
+      on_event:
+        normal_event:
+          to: normal
+          transition:
+            base: dual_running_blend
+            duration: 1.0
+        toggle_dance_pause_event:
+          action: toggle_dance_pause
+
   applause:
     manifest:
       label: 鼓掌
@@ -274,6 +400,7 @@ states:
             duration: 1.0
         toggle_dance_pause_event:
           action: toggle_dance_pause
+
   hello:
     manifest:
       label: 挥手
@@ -291,3 +418,35 @@ states:
             duration: 1.0
         toggle_dance_pause_event:
           action: toggle_dance_pause
+
+  # Keep this state last so adding the opt-in mode does not renumber any
+  # existing state IDs consumed by the App/runtime snapshot.
+  sonic_teleop_gripper:
+    manifest:
+      label: SONIC遥操（夹爪）
+      index: 15
+      group: Advanced
+      icon: pan_tool
+      confirm: true
+      confirm_message: 本模式会控制真实夹爪；进入前请松开左右PICO trigger并确认夹爪周围安全；随后按ABXY校准，再按A+X切入实时POSE
+    behavior: SonicTeleopState
+    params:
+      hardware_gripper: true
+      gripper_input_timeout_s: 0.2
+      gripper_release_threshold: 0.05
+    transitions:
+      on_event:
+        normal_event:
+          to: normal
+          transition: soft_switch
+        zero_torque_event: zero_torque
+        pd_brake_event:
+          to: pd_brake
+          transition:
+            base: first_frame_switch
+            enter_duration: 1.0
+        recover_event:
+          to: recover
+          transition: soft_switch
+        toggle_dance_pause_event:
+          action: reset_sonic_alignment

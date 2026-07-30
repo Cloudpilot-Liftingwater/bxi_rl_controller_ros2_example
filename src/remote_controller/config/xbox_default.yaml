@@ -103,6 +103,9 @@ sources:
       keyboard.normal_run:
         from: keyboard.key
         key: '5'
+      keyboard.back_flip:
+        from: keyboard.key
+        key: '0'
       keyboard.forward_flip:
         from: keyboard.key
         key: '7'
@@ -112,6 +115,12 @@ sources:
       keyboard.hello:
         from: keyboard.key
         key: '9'
+      keyboard.sonic_teleop:
+        from: keyboard.key
+        key: '6'
+      keyboard.sonic_teleop_gripper:
+        from: keyboard.key
+        key: g
 curves:
   stick:
     type: expo
@@ -457,6 +466,10 @@ controls:
     type: bool
     inputs:
     - source: keyboard.normal_run
+  keyboard.back_flip_event:
+    type: bool
+    inputs:
+    - source: keyboard.back_flip
   keyboard.forward_flip_event:
     type: bool
     inputs:
@@ -469,6 +482,14 @@ controls:
     type: bool
     inputs:
     - source: keyboard.hello
+  keyboard.sonic_teleop_event:
+    type: bool
+    inputs:
+    - source: keyboard.sonic_teleop
+  keyboard.sonic_teleop_gripper_event:
+    type: bool
+    inputs:
+    - source: keyboard.sonic_teleop_gripper
 outputs:
   conflict_policy: first_wins
   publish_on_change: true
@@ -540,12 +561,22 @@ outputs:
     - released: shoulder.right_event
     - released: trigger.left_event
     - released: trigger.right_event
+  - output: btn_10=1
+    when:
+      any:
+      - - trigger.left_event
+        - button.x_event
+      - - keyboard.back_flip_event
   - output: btn_10=2
     when:
       any:
       - - trigger.left_event
         - button.y_event
       - - keyboard.forward_flip_event
+  - output: btn_10=3
+    when:
+    - trigger.left_event
+    - button.a_event
   - output: btn_10=4
     when:
       any:
@@ -563,6 +594,15 @@ outputs:
       - - trigger.right_event
         - button.a_event
       - - keyboard.hello_event
+  - output: btn_10=7
+    when:
+      any:
+      - - trigger.right_event
+        - button.x_event
+      - - keyboard.sonic_teleop_event
+  - output: btn_10=8
+    when:
+    - keyboard.sonic_teleop_gripper_event
 system:
   start:
   - mkdir -p /var/log/bxi_log
