@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_URL="${REPO_URL:-https://github.com/Cloudpilot-Liftingwater/bxi_rl_controller_ros2_example.git}"
-BRANCH="${BRANCH:-feature/sonic-elf3-runtime-clean}"
+BRANCH="${BRANCH:-feature/sonic-elf3-runtime-gripper-clean}"
 SRC_DIR="${SRC_DIR:-${HOME}/bxi_rl_controller_ros2_example}"
 OPT_PREFIX="${OPT_PREFIX:-/opt/bxi/bxi_rl_controller_ros2_example}"
 BUILD_INSTALL="${BUILD_INSTALL:-/tmp/elf3_sonic_install}"

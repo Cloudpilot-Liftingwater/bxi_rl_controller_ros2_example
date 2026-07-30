@@ -80,13 +80,13 @@ On each robot:
 cd ~
 
 if [ ! -d "$HOME/bxi_rl_controller_ros2_example/.git" ]; then
-  git clone -b feature/sonic-elf3-runtime-clean --single-branch \
+  git clone -b feature/sonic-elf3-runtime-gripper-clean --single-branch \
     https://github.com/Cloudpilot-Liftingwater/bxi_rl_controller_ros2_example.git \
     "$HOME/bxi_rl_controller_ros2_example"
 fi
 
 export REPO_URL=https://github.com/Cloudpilot-Liftingwater/bxi_rl_controller_ros2_example.git
-export BRANCH=feature/sonic-elf3-runtime-clean
+export BRANCH=feature/sonic-elf3-runtime-gripper-clean
 bash "$HOME/bxi_rl_controller_ros2_example/script/deploy_robot_sonic_example.sh"
 ```
 

@@ -568,15 +568,15 @@ wrist
 cd ~
 
 if [ ! -d "$HOME/bxi_rl_controller_ros2_example/.git" ]; then
-  git clone -b feature/sonic-elf3-runtime-clean --single-branch \
+  git clone -b feature/sonic-elf3-runtime-gripper-clean --single-branch \
     https://github.com/Cloudpilot-Liftingwater/bxi_rl_controller_ros2_example.git \
     "$HOME/bxi_rl_controller_ros2_example"
 else
   cd "$HOME/bxi_rl_controller_ros2_example"
   git remote add sonic https://github.com/Cloudpilot-Liftingwater/bxi_rl_controller_ros2_example.git 2>/dev/null || \
     git remote set-url sonic https://github.com/Cloudpilot-Liftingwater/bxi_rl_controller_ros2_example.git
-  git fetch sonic feature/sonic-elf3-runtime-clean
-  git checkout -B feature/sonic-elf3-runtime-clean sonic/feature/sonic-elf3-runtime-clean
+  git fetch sonic feature/sonic-elf3-runtime-gripper-clean
+  git checkout -B feature/sonic-elf3-runtime-gripper-clean sonic/feature/sonic-elf3-runtime-gripper-clean
 fi
 
 bash "$HOME/bxi_rl_controller_ros2_example/script/deploy_robot_sonic_example.sh"
@@ -1092,6 +1092,9 @@ elf3_sonic_deploy_4f87e2c1582f_ubuntu22_amd64.tgz
 commit=4f87e2c1582f4251561c13d19ef6aa5572343945
 branch=feature/sonic-elf3-runtime-clean
 ```
+
+上面是当时产物中保留的历史字段；当前部署统一使用
+`feature/sonic-elf3-runtime-gripper-clean`，不再依赖该旧分支。
 
 部署目标在公开报告中统一记为 `<robot-id>`，不记录机器人实际编号、IP、账号或现场网络信息。
 
