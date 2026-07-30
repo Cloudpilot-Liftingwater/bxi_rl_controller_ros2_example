@@ -22,6 +22,8 @@ controller, Sim2Sim or the PICO runtime.
 Build the official workspace dependencies first, then install:
 
 ```bash
+source /opt/ros/humble/setup.bash
+source /opt/bxi/bxi_ros2_pkg-main/setup.bash
 python3 -m pip install -r script/sonic_runtime_requirements.txt
 colcon build --packages-select bxi_example_py_elf3 remote_controller
 ```
@@ -119,6 +121,7 @@ Build once from the repository root:
 
 ```bash
 source /opt/ros/humble/setup.bash
+source /opt/bxi/bxi_ros2_pkg-main/setup.bash
 colcon build --packages-select bxi_example_py_elf3 remote_controller
 ```
 
@@ -149,7 +152,6 @@ Keyboard state flow is `!` (PD brake), `1` (normal), then `6` (body-only
 SONIC). Key `g` selects the explicit hardware-gripper SONIC state; in Sim2Sim,
 the selected MuJoCo launch script still determines whether the four simulated
 finger actuators exist.
-Back-flip moves from keyboard key `6` to `0`; its gamepad mapping is unchanged.
 The SONIC gamepad mapping is `RT + X`.
 
 When the state-machine transition targets `sonic_teleop` or
