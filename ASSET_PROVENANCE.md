@@ -4,17 +4,6 @@ This file documents binary/data assets added by the ELF3 SONIC runtime branch.
 It does not replace the repository-wide license, which must be selected and
 approved by the repository owner.
 
-## BXI action assets
-
-The following company assets are retained on the development/runtime branch but
-are intentionally excluded from the sanitized `main` release by
-`release_protection.yaml`:
-
-- `src/bxi_example_py_elf3/data/isaaclab_model/back_flip.npz`
-- `src/bxi_example_py_elf3/data/isaaclab_model/back_flip.onnx`
-- `src/bxi_example_py_elf3/data/isaaclab_model/ballet.npz`
-- `src/bxi_example_py_elf3/data/isaaclab_model/ballet.onnx`
-
 ## ELF3 SONIC model
 
 `src/bxi_example_py_elf3/data/sonic_model/elf3_step28800_smpl/model_step_028800_smpl.onnx`

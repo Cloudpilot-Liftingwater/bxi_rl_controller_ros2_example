@@ -103,9 +103,6 @@ sources:
       keyboard.normal_run:
         from: keyboard.key
         key: '5'
-      keyboard.back_flip:
-        from: keyboard.key
-        key: '0'
       keyboard.forward_flip:
         from: keyboard.key
         key: '7'
@@ -466,10 +463,6 @@ controls:
     type: bool
     inputs:
     - source: keyboard.normal_run
-  keyboard.back_flip_event:
-    type: bool
-    inputs:
-    - source: keyboard.back_flip
   keyboard.forward_flip_event:
     type: bool
     inputs:
@@ -561,22 +554,12 @@ outputs:
     - released: shoulder.right_event
     - released: trigger.left_event
     - released: trigger.right_event
-  - output: btn_10=1
-    when:
-      any:
-      - - trigger.left_event
-        - button.x_event
-      - - keyboard.back_flip_event
   - output: btn_10=2
     when:
       any:
       - - trigger.left_event
         - button.y_event
       - - keyboard.forward_flip_event
-  - output: btn_10=3
-    when:
-    - trigger.left_event
-    - button.a_event
   - output: btn_10=4
     when:
       any:

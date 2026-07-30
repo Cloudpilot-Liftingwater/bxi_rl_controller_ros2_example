@@ -359,26 +359,11 @@ class BxiExample(HotReloadMixin, Node):
         self.normal_run: NormalMotionPolicyMjlab = NormalMotionPolicyMjlab(
             model_file("mjlab_model/model_normal.onnx")
         )
-        self.back_flip: DanceMotionPolicyGravityIsaaclab = (
-            DanceMotionPolicyGravityIsaaclab(
-                model_file("isaaclab_model/back_flip.npz"),
-                model_file("isaaclab_model/back_flip.onnx"),
-                start_frame=40,
-            )
-        )
         self.forward_flip: DanceMotionPolicyGravityIsaaclab = (
             DanceMotionPolicyGravityIsaaclab(
                 model_file("isaaclab_model/forward_flip.npz"),
                 model_file("isaaclab_model/forward_flip.onnx"),
                 start_frame=150,
-            )
-        )
-        self.ballet: DanceMotionPolicyGravityIsaaclabV3 = (
-            DanceMotionPolicyGravityIsaaclabV3(
-                model_file("isaaclab_model/ballet.npz"),
-                model_file("isaaclab_model/ballet.onnx"),
-                start_frame=60,
-                fixed_pos=True
             )
         )
         self.withoutarm: HumanoidGaitPolicyLiteIsaaclab = HumanoidGaitPolicyLiteIsaaclab(

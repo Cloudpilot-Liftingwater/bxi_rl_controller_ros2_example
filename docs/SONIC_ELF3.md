@@ -2,9 +2,9 @@
 
 ## Scope
 
-This branch adds SONIC as an ELF3 state-machine action. The existing official
-back-flip, forward-flip, ballet, walking, recovery and gesture actions remain
-unchanged. The SONIC controller still publishes the official 29-joint
+This branch adds SONIC as an ELF3 state-machine action. The remaining official
+forward-flip, walking, recovery and gesture actions remain unchanged. The
+SONIC controller still publishes the official 29-joint
 `ActuatorCmds` interface on hardware and in the standard Sim2Sim entry point.
 The dedicated gripper Sim2Sim entry point appends four simulation-only finger
 joints for a 33-actuator command; it never changes the hardware body contract.

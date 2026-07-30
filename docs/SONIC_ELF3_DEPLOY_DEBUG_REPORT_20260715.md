@@ -1144,9 +1144,7 @@ App manifest：sonic_teleop -> sonic_teleop_event -> btn_10=7
 `btn_10` 是整数动作选择槽，不是单一布尔按钮：
 
 ```text
-btn_10=1  back_flip
 btn_10=2  forward_flip
-btn_10=3  ballet
 btn_10=5  applause
 btn_10=6  hello
 btn_10=7  sonic_teleop
