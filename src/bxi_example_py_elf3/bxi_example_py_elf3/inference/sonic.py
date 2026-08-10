@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import math
 import os
+import queue
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -19,6 +21,8 @@ from pathlib import Path
 import numpy as np
 import onnxruntime as ort
 import zmq
+
+from bxi_example_py_elf3.sonic_pico.zmq_messages import pack_pose_message
 
 try:
     from ament_index_python.packages import get_package_share_directory
@@ -257,6 +261,16 @@ class SmplReferenceFrame:
     anchor_quat: Optional[np.ndarray] = None
     frame_index: int = -1
     sequence: int = 0
+    stream_epoch: Optional[int] = None
+    source_stale: bool = False
+    source_age_ms: Optional[float] = None
+    playback_hold: bool = False
+    newest_frame_index: int = -1
+    lead_frames: int = -1
+    valid_horizon: int = 0
+    clamp_slots: int = -1
+    playout_seq: Optional[int] = None
+    consumer_session: Optional[int] = None
 
 
 def _as_bool_env(name: str, default: bool) -> bool:
@@ -419,6 +433,9 @@ class SonicTeleopPolicy:
         smpl_ref_zmq_host: Optional[str] = None,
         smpl_ref_zmq_port: Optional[int] = None,
         smpl_ref_zmq_topic: Optional[str] = None,
+        smpl_control_zmq_host: Optional[str] = None,
+        smpl_control_zmq_port: Optional[int] = None,
+        smpl_control_zmq_topic: Optional[str] = None,
         require_live_reference: Optional[bool] = None,
         yaw_bias_rad: Optional[float] = None,
     ):
@@ -443,6 +460,17 @@ class SonicTeleopPolicy:
         )
         self.smpl_ref_zmq_topic = smpl_ref_zmq_topic or os.environ.get(
             "BXI_SONIC_SMPL_REF_ZMQ_TOPIC", "smpl_ref"
+        )
+        self.smpl_control_zmq_host = smpl_control_zmq_host or os.environ.get(
+            "SMPL_REF_CONTROL_HOST", self.smpl_ref_zmq_host
+        )
+        self.smpl_control_zmq_port = int(
+            smpl_control_zmq_port
+            if smpl_control_zmq_port is not None
+            else os.environ.get("SMPL_REF_CONTROL_PORT", "5558")
+        )
+        self.smpl_control_zmq_topic = smpl_control_zmq_topic or os.environ.get(
+            "SMPL_REF_CONTROL_TOPIC", "smpl_ref_control"
         )
         self.require_live_reference = (
             _as_bool_env("BXI_SONIC_REQUIRE_LIVE_REFERENCE", True)
@@ -477,6 +505,15 @@ class SonicTeleopPolicy:
         self.latest_live_ref: Optional[SmplReferenceFrame] = None
         self.latest_live_ref_time = 0.0
         self.live_sequence = 0
+        self.stream_epoch: Optional[int] = None
+        self.consumer_session = 0
+        self.pending_reset_request_id = 0
+        self.pending_reset_holds_reference = False
+        self.last_reset_control_send_time = float("-inf")
+        self.last_reset_request_id = 0
+        self.control_send_failures = 0
+        self.invalid_live_ref_messages = 0
+        self.live_reference_stale = False
         self.policy_active = False
         self.last_status = "not_started"
 
@@ -503,19 +540,155 @@ class SonicTeleopPolicy:
             )
 
     def _init_zmq(self) -> None:
+        # pyzmq sockets are not thread-safe.  ROS2's MultiThreadedExecutor may
+        # construct this policy and call inference_step() on different worker
+        # threads, so one dedicated thread owns the Context and both sockets
+        # for their complete create/use/close lifecycle.
         self.zmq_context = None
         self.zmq_socket = None
+        self.zmq_control_socket = None
+        self.zmq_poller = None
+        self._zmq_inbound_queue: queue.Queue[bytes] = queue.Queue(maxsize=1)
+        self._zmq_outbound_queue: queue.Queue[bytes] = queue.Queue(maxsize=64)
+        self._zmq_stop_event = threading.Event()
+        self._zmq_ready_event = threading.Event()
+        self._zmq_thread: Optional[threading.Thread] = None
+        self._zmq_io_thread_id: Optional[int] = None
+        self._zmq_control_available = False
+        self._zmq_start_error: Optional[str] = None
         if not self.use_smpl_ref_zmq:
+            self._zmq_ready_event.set()
             return
-        self.zmq_context = zmq.Context()
-        self.zmq_socket = self.zmq_context.socket(zmq.SUB)
-        self.zmq_socket.setsockopt(zmq.RCVHWM, 1)
-        self.zmq_socket.setsockopt_string(zmq.SUBSCRIBE, self.smpl_ref_zmq_topic)
-        self.zmq_socket.connect(
-            f"tcp://{self.smpl_ref_zmq_host}:{self.smpl_ref_zmq_port}"
+
+        self._zmq_thread = threading.Thread(
+            target=self._zmq_io_loop,
+            name="sonic-smpl-ref-zmq",
+            daemon=True,
         )
-        self.zmq_poller = zmq.Poller()
-        self.zmq_poller.register(self.zmq_socket, zmq.POLLIN)
+        self._zmq_thread.start()
+        self._zmq_ready_event.wait(timeout=1.0)
+
+    @staticmethod
+    def _replace_latest_message(target: queue.Queue[bytes], message: bytes) -> None:
+        try:
+            target.put_nowait(message)
+            return
+        except queue.Full:
+            pass
+        try:
+            target.get_nowait()
+        except queue.Empty:
+            pass
+        try:
+            target.put_nowait(message)
+        except queue.Full:
+            pass
+
+    def _zmq_io_loop(self) -> None:
+        context = None
+        ref_socket = None
+        control_socket = None
+        poller = None
+        self._zmq_io_thread_id = threading.get_ident()
+        try:
+            context = zmq.Context()
+            ref_socket = context.socket(zmq.SUB)
+            ref_socket.setsockopt(zmq.LINGER, 0)
+            ref_socket.setsockopt(zmq.RCVHWM, 1)
+            ref_socket.setsockopt_string(zmq.SUBSCRIBE, self.smpl_ref_zmq_topic)
+            ref_socket.connect(
+                f"tcp://{self.smpl_ref_zmq_host}:{self.smpl_ref_zmq_port}"
+            )
+            poller = zmq.Poller()
+            poller.register(ref_socket, zmq.POLLIN)
+
+            try:
+                control_socket = context.socket(zmq.PUSH)
+                control_socket.setsockopt(zmq.LINGER, 0)
+                control_socket.setsockopt(zmq.SNDHWM, 8)
+                control_socket.connect(
+                    f"tcp://{self.smpl_control_zmq_host}:{self.smpl_control_zmq_port}"
+                )
+                self._zmq_control_available = True
+            except Exception:
+                if control_socket is not None:
+                    try:
+                        control_socket.close(linger=0)
+                    except Exception:
+                        pass
+                control_socket = None
+                self._zmq_control_available = False
+
+            self._zmq_ready_event.set()
+            while not self._zmq_stop_event.is_set():
+                events = dict(poller.poll(timeout=10))
+                if ref_socket in events:
+                    while True:
+                        try:
+                            message = ref_socket.recv(flags=zmq.NOBLOCK)
+                        except zmq.Again:
+                            break
+                        self._replace_latest_message(
+                            self._zmq_inbound_queue, message
+                        )
+
+                if control_socket is not None:
+                    for _ in range(64):
+                        try:
+                            message = self._zmq_outbound_queue.get_nowait()
+                        except queue.Empty:
+                            break
+                        try:
+                            control_socket.send(message, flags=zmq.NOBLOCK)
+                        except Exception:
+                            # The bridge repeats an unacknowledged window, and
+                            # reset requests are retried periodically, so a
+                            # failed nonblocking send can be safely dropped.
+                            self.control_send_failures += 1
+        except Exception as exc:
+            self._zmq_start_error = repr(exc)
+            self._zmq_control_available = False
+            self._zmq_ready_event.set()
+        finally:
+            if poller is not None and ref_socket is not None:
+                try:
+                    poller.unregister(ref_socket)
+                except Exception:
+                    pass
+            for socket in (control_socket, ref_socket):
+                if socket is not None:
+                    try:
+                        socket.close(linger=0)
+                    except Exception:
+                        pass
+            if context is not None:
+                try:
+                    context.term()
+                except Exception:
+                    pass
+            self._zmq_control_available = False
+            self._zmq_ready_event.set()
+
+    def close(self) -> None:
+        """Signal and join the sole owner of all policy ZMQ resources."""
+        stop_event = getattr(self, "_zmq_stop_event", None)
+        if stop_event is not None:
+            stop_event.set()
+        thread = getattr(self, "_zmq_thread", None)
+        if (
+            thread is not None
+            and thread.is_alive()
+            and thread.ident != threading.get_ident()
+        ):
+            thread.join(timeout=2.0)
+        if thread is not None and not thread.is_alive():
+            self._zmq_thread = None
+
+    def __del__(self) -> None:  # pragma: no cover - process-shutdown fallback
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def _load_stream_reference(self) -> None:
         d = np.load(self.stream_reference_npz)
@@ -544,6 +717,19 @@ class SonicTeleopPolicy:
         self.motion_cursor = 0
         self.yaw_aligned = False
         self.yaw_offset = 0.0
+        # An explicit controller-state reset starts a new POSE session.  Do
+        # not let the infinite stale hold cross that session boundary; normal
+        # network loss never calls reset() and therefore still retains the
+        # last complete reference window.
+        self.latest_live_ref = None
+        self.latest_live_ref_time = 0.0
+        self.stream_epoch = None
+        self.consumer_session = 0
+        self.pending_reset_request_id = self._next_reset_request_id()
+        self.pending_reset_holds_reference = False
+        self.last_reset_control_send_time = float("-inf")
+        self._maybe_resend_stream_reset(force=True)
+        self.live_reference_stale = False
         self.policy_active = False
         self.last_status = "reset"
         self.target_dof_pos = self.default_dof_pos.copy()
@@ -552,37 +738,154 @@ class SonicTeleopPolicy:
         self.yaw_aligned = False
         self.yaw_offset = 0.0
 
+    def _next_reset_request_id(self) -> int:
+        max_i64 = int(np.iinfo(np.int64).max)
+        candidate = int(time.time_ns() % max_i64)
+        if candidate <= 0:
+            candidate = 1
+        if candidate <= self.last_reset_request_id:
+            candidate = self.last_reset_request_id + 1
+            if candidate > max_i64:
+                candidate = 1
+        self.last_reset_request_id = candidate
+        return candidate
+
+    def _send_control(self, fields: dict[str, np.ndarray]) -> bool:
+        outbound = getattr(self, "_zmq_outbound_queue", None)
+        if outbound is None or not getattr(self, "_zmq_control_available", False):
+            return False
+        try:
+            outbound.put_nowait(
+                pack_pose_message(
+                    fields,
+                    topic=self.smpl_control_zmq_topic,
+                    version=1,
+                )
+            )
+            return True
+        except queue.Full:
+            self.control_send_failures += 1
+            return False
+
+    def _send_reference_ack(self, frame: SmplReferenceFrame) -> bool:
+        if (
+            frame.consumer_session is None
+            or frame.stream_epoch is None
+            or frame.playout_seq is None
+        ):
+            return False
+        return self._send_control(
+            {
+                "ack_consumer_session": np.asarray(
+                    [frame.consumer_session], dtype=np.int64
+                ),
+                "ack_stream_epoch": np.asarray(
+                    [frame.stream_epoch], dtype=np.int64
+                ),
+                "ack_playout_seq": np.asarray([frame.playout_seq], dtype=np.int64),
+            }
+        )
+
+    def _maybe_resend_stream_reset(self, *, force: bool = False) -> bool:
+        if self.pending_reset_request_id <= 0:
+            return False
+        now = time.monotonic()
+        if not force and now - self.last_reset_control_send_time < 0.5:
+            return False
+        self.last_reset_control_send_time = now
+        return self._send_control(
+            {
+                "reset_request_id": np.asarray(
+                    [self.pending_reset_request_id], dtype=np.int64
+                ),
+                "reset_stream": np.asarray([1], dtype=np.uint8),
+            }
+        )
+
+    def _reference_allowed_after_reset(self, frame: SmplReferenceFrame) -> bool:
+        pending = self.pending_reset_request_id
+        if pending > 0:
+            if frame.consumer_session != pending:
+                return False
+            self.consumer_session = pending
+            self.pending_reset_request_id = 0
+            self.pending_reset_holds_reference = False
+            return True
+
+        if self.consumer_session > 0 and frame.consumer_session != self.consumer_session:
+            # A restarted bridge starts at session 0.  Keep the already-active
+            # reference for inference, reject the new bridge's unowned window,
+            # and replay the same idempotent reset request until it adopts us.
+            self.pending_reset_request_id = self.consumer_session
+            self.pending_reset_holds_reference = True
+            self.last_reset_control_send_time = float("-inf")
+            self._maybe_resend_stream_reset(force=True)
+            return False
+
+        if frame.consumer_session is not None:
+            self.consumer_session = frame.consumer_session
+        return True
+
     def poll_reference(self) -> Optional[SmplReferenceFrame]:
-        if self.zmq_socket is None:
-            return None
+        inbound = getattr(self, "_zmq_inbound_queue", None)
+        if inbound is None:
+            return self.latest_live_ref
         while True:
-            events = dict(self.zmq_poller.poll(timeout=0))
-            if self.zmq_socket not in events:
+            try:
+                msg = inbound.get_nowait()
+            except queue.Empty:
                 break
-            msg = self.zmq_socket.recv(flags=zmq.NOBLOCK)
-            fields = _decode_packed_message(msg, self.smpl_ref_zmq_topic)
-            if not fields:
+            try:
+                fields = _decode_packed_message(msg, self.smpl_ref_zmq_topic)
+                if not fields:
+                    self.invalid_live_ref_messages += 1
+                    continue
+                frame = self._frame_from_fields(fields)
+            except Exception:
+                self.invalid_live_ref_messages += 1
                 continue
-            frame = self._frame_from_fields(fields)
+            if not self._reference_allowed_after_reset(frame):
+                continue
             self.latest_live_ref = frame
             self.latest_live_ref_time = time.monotonic()
         return self.latest_live_ref
 
     def _frame_from_fields(self, fields: dict[str, np.ndarray]) -> SmplReferenceFrame:
         self.live_sequence += 1
-        frame_index = fields.get("frame_index")
-        if frame_index is None or frame_index.size == 0:
-            index = -1
-        else:
-            index = int(np.asarray(frame_index).reshape(-1)[-1])
+
+        def scalar(name: str, default: Any) -> Any:
+            value = fields.get(name)
+            if value is None or np.asarray(value).size == 0:
+                return default
+            return np.asarray(value).reshape(-1)[-1]
+
+        source_age_ms = scalar("source_age_ms", None)
+        playout_seq = scalar("playout_seq", None)
+        consumer_session = scalar("consumer_session", None)
         anchor = fields.get("anchor_quat")
         return SmplReferenceFrame(
             term1_local=_as_window(fields["term1_local"], 72, "term1_local"),
             root_quat=_as_window(fields["root_quat"], 4, "root_quat"),
             wrist=_as_window(fields["wrist"], 6, "wrist"),
             anchor_quat=_as_window(anchor, 4, "anchor_quat") if anchor is not None else None,
-            frame_index=index,
+            frame_index=int(scalar("frame_index", -1)),
             sequence=self.live_sequence,
+            stream_epoch=(
+                int(scalar("stream_epoch", 0))
+                if fields.get("stream_epoch") is not None
+                else None
+            ),
+            source_stale=bool(scalar("source_stale", False)),
+            source_age_ms=(float(source_age_ms) if source_age_ms is not None else None),
+            playback_hold=bool(scalar("playback_hold", False)),
+            newest_frame_index=int(scalar("newest_frame_index", -1)),
+            lead_frames=int(scalar("lead_frames", -1)),
+            valid_horizon=int(scalar("valid_horizon", 0)),
+            clamp_slots=int(scalar("clamp_slots", -1)),
+            playout_seq=(int(playout_seq) if playout_seq is not None else None),
+            consumer_session=(
+                int(consumer_session) if consumer_session is not None else None
+            ),
         )
 
     def _offline_frame(self) -> SmplReferenceFrame:
@@ -599,9 +902,33 @@ class SonicTeleopPolicy:
         )
 
     def _active_reference(self) -> Optional[SmplReferenceFrame]:
+        self._maybe_resend_stream_reset()
         live = self.poll_reference()
-        if live is not None and time.monotonic() - self.latest_live_ref_time <= self.live_ref_timeout_s:
+        if live is not None:
+            if live.stream_epoch is not None and live.stream_epoch != self.stream_epoch:
+                self.stream_epoch = live.stream_epoch
+                # Match the official stream-restart semantics: the reference
+                # heading belongs to the new stream epoch, while real robot
+                # proprioception/action history remains continuous.
+                self.reset_yaw_alignment()
+
+            local_age_s = max(0.0, time.monotonic() - self.latest_live_ref_time)
+            source_age_stale = (
+                live.source_age_ms is not None
+                and live.source_age_ms > self.live_ref_timeout_s * 1000.0
+            )
+            self.live_reference_stale = bool(
+                live.source_stale
+                or source_age_stale
+                or local_age_s > self.live_ref_timeout_s
+                or self.pending_reset_holds_reference
+            )
+            # Once a complete live reference has arrived, retain it without a
+            # timeout.  This mirrors the official policy-side boundary hold:
+            # inference continues from live robot state instead of abruptly
+            # replacing the policy output with the nominal joint pose.
             return live
+        self.live_reference_stale = False
         if self.require_live_reference:
             return None
         return self._offline_frame()
@@ -690,7 +1017,11 @@ class SonicTeleopPolicy:
             self._update_history(q, dq, quat_wxyz, omega)
             self.target_dof_pos = self.default_dof_pos.copy()
             self.policy_active = False
-            self.last_status = "waiting_for_live_smpl_ref"
+            self.last_status = (
+                "waiting_for_stream_reset"
+                if self.pending_reset_request_id > 0
+                else "waiting_for_live_smpl_ref"
+            )
             return self.target_dof_pos
 
         model_input = self._build_model_input(frame, q, dq, quat_wxyz, omega)
@@ -702,7 +1033,11 @@ class SonicTeleopPolicy:
         self.last_action = action
         self.target_dof_pos = self.default_dof_pos + action * self.action_scale
         self.policy_active = True
-        self.last_status = "policy"
+        self.last_status = "stale_hold" if self.live_reference_stale else "policy"
+        # ACK only after the complete model/action path succeeded.  If the
+        # control channel is unavailable, an active policy safely keeps
+        # running on the held reference instead of raising from ZMQ send.
+        self._send_reference_ack(frame)
         if not self.require_live_reference:
             self.motion_cursor = min(self.motion_cursor + 1, self.ref_term1.shape[0] - 1)
         return self.target_dof_pos
