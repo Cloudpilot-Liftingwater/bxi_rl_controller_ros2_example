@@ -18,12 +18,16 @@ in `third_party/GEAR_SONIC_LICENSE.txt`.
 
 Licensed by NVIDIA Corporation under the NVIDIA Open Model License.
 
-The checked-in ONNX differs from the original export only by removal of ONNX
-node `doc_string` fields that contained export-machine stack traces. Its
-inference contract is `(1, 1770) -> (1, 29)`, and the cleaned model produced
-bit-identical CPU output in the publication check. Its SHA256 is:
+The checked-in ONNX files differ from their original exports only by removal
+of ONNX node `doc_string` fields that contained export-machine stack traces;
+graph parameters and inference contracts are unchanged. Their SHA256 values
+are:
 
-`26dc3e96adfb894850b409e43f06178c79b74167c719f626eadbb9df3fcacd06`
+```text
+8b30e2f9afc24e081662ea8daf47724753d16918e633688c9561ef4cc54d71e0  step28800 modular encoder, (1,1751) -> (1,64)
+8f60f1aae1191ac22a8bb1b0eaf98110529adaf09d2a13bb6d9d61c873bbf69f  step28800 g1_dyn decoder, (1,994) -> (1,29)
+26dc3e96adfb894850b409e43f06178c79b74167c719f626eadbb9df3fcacd06  step28800 SMPL policy, (1,1770) -> (1,29)
+```
 
 `rotation_conversion.py` contains code derived from PyTorch3D, Copyright (c)
 Meta Platforms, Inc. and affiliates, under the BSD 3-Clause License. See
