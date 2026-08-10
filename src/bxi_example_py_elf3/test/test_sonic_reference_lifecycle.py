@@ -134,24 +134,35 @@ def _robot_observation():
     )
 
 
-def test_frame_parses_bridge_epoch_stale_and_cursor_metadata(monkeypatch):
-    policy = _make_policy(monkeypatch)
-    fields = {
-        "term1_local": np.zeros((WINDOW, 72), dtype=np.float32),
-        "root_quat": np.zeros((WINDOW, 4), dtype=np.float32),
-        "wrist": np.zeros((WINDOW, 6), dtype=np.float32),
+def _live_fields(frame_count=WINDOW):
+    return {
+        "term1_local": np.zeros((frame_count, 72), dtype=np.float32),
+        "root_quat": np.tile(
+            np.array([[1.0, 0.0, 0.0, 0.0]], dtype=np.float32),
+            (frame_count, 1),
+        ),
+        "wrist": np.zeros((frame_count, 6), dtype=np.float32),
         "frame_index": np.array([41], dtype=np.int64),
         "newest_frame_index": np.array([50], dtype=np.int64),
         "stream_epoch": np.array([7], dtype=np.int64),
-        "source_stale": np.array([1], dtype=np.uint8),
-        "source_age_ms": np.array([612.5], dtype=np.float32),
-        "playback_hold": np.array([1], dtype=np.uint8),
-        "lead_frames": np.array([9], dtype=np.int64),
-        "valid_horizon": np.array([10], dtype=np.int64),
+        "valid_horizon": np.array([WINDOW], dtype=np.int64),
         "clamp_slots": np.array([0], dtype=np.int64),
         "playout_seq": np.array([123], dtype=np.int64),
         "consumer_session": np.array([456], dtype=np.int64),
     }
+
+
+def test_frame_parses_bridge_epoch_stale_and_cursor_metadata(monkeypatch):
+    policy = _make_policy(monkeypatch)
+    fields = _live_fields()
+    fields.update(
+        {
+            "source_stale": np.array([1], dtype=np.uint8),
+            "source_age_ms": np.array([612.5], dtype=np.float32),
+            "playback_hold": np.array([1], dtype=np.uint8),
+            "lead_frames": np.array([9], dtype=np.int64),
+        }
+    )
 
     frame = policy._frame_from_fields(fields)
 
@@ -166,6 +177,65 @@ def test_frame_parses_bridge_epoch_stale_and_cursor_metadata(monkeypatch):
     assert frame.clamp_slots == 0
     assert frame.playout_seq == 123
     assert frame.consumer_session == 456
+
+
+@pytest.mark.parametrize(
+    "frame_count,valid_horizon,clamp_slots,error",
+    [
+        (2, WINDOW, 0, r"term1_local.*expected \(10,72\)"),
+        (WINDOW + 1, WINDOW, 0, r"term1_local.*expected \(10,72\)"),
+        (WINDOW, 2, 0, "valid_horizon=10"),
+        (WINDOW, WINDOW, 8, "clamp_slots=0"),
+    ],
+)
+def test_v4_live_reference_rejects_nonexact_or_clamped_windows(
+    monkeypatch, frame_count, valid_horizon, clamp_slots, error
+):
+    policy = _make_policy(monkeypatch)
+    fields = _live_fields(frame_count)
+    fields["valid_horizon"] = np.array([valid_horizon], dtype=np.int64)
+    fields["clamp_slots"] = np.array([clamp_slots], dtype=np.int64)
+
+    with pytest.raises(ValueError, match=error):
+        policy._frame_from_fields(fields)
+
+
+def test_invalid_v4_window_is_dropped_without_replacing_held_reference(monkeypatch):
+    policy = _make_policy(monkeypatch)
+    held = _frame(epoch=4, consumer_session=22)
+    policy.latest_live_ref = held
+    policy.latest_live_ref_time = sonic_module.time.monotonic()
+    fields = _live_fields(frame_count=2)
+    policy._zmq_inbound_queue.put_nowait(
+        sonic_module.pack_pose_message(fields, topic="smpl_ref", version=4)
+    )
+
+    assert policy.poll_reference() is held
+    assert policy.invalid_live_ref_messages == 1
+
+
+def test_legacy_live_reference_keeps_short_window_compatibility(monkeypatch):
+    policy = _make_policy(monkeypatch)
+    fields = {
+        "term1_local": np.zeros((2, 72), dtype=np.float32),
+        "root_quat": np.tile(
+            np.array([[1.0, 0.0, 0.0, 0.0]], dtype=np.float32),
+            (2, 1),
+        ),
+        "wrist": np.zeros((2, 6), dtype=np.float32),
+        "frame_index": np.array([41], dtype=np.int64),
+    }
+    fields["term1_local"][1, 0] = 9.0
+
+    frame = policy._frame_from_fields(fields)
+
+    assert frame.term1_local.shape == (WINDOW, 72)
+    np.testing.assert_array_equal(
+        frame.term1_local[2:],
+        np.repeat(frame.term1_local[1:2], WINDOW - 2, axis=0),
+    )
+    assert frame.stream_epoch is None
+    assert frame.playout_seq is None
 
 
 def test_no_live_frame_still_returns_default_pose(monkeypatch):
@@ -435,6 +505,8 @@ def test_zmq_io_thread_owns_create_receive_send_and_close(monkeypatch):
         "wrist": np.zeros((WINDOW, 6), dtype=np.float32),
         "frame_index": np.array([10], dtype=np.int64),
         "stream_epoch": np.array([123], dtype=np.int64),
+        "valid_horizon": np.array([WINDOW], dtype=np.int64),
+        "clamp_slots": np.array([0], dtype=np.int64),
         "playout_seq": np.array([7], dtype=np.int64),
         "consumer_session": np.array([88], dtype=np.int64),
     }

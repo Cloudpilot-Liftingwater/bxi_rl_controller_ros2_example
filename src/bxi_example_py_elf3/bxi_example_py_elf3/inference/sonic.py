@@ -422,6 +422,35 @@ def _as_window(arr: np.ndarray, width: int, name: str) -> np.ndarray:
     )
 
 
+def _as_exact_live_window(arr: np.ndarray, width: int, name: str) -> np.ndarray:
+    """Validate the no-clamp window contract used by the live v4 stream."""
+    arr = np.asarray(arr, dtype=np.float32)
+    if arr.ndim == 1:
+        if arr.size != width:
+            raise ValueError(
+                f"{name} has shape {arr.shape}; expected ({WINDOW},{width})"
+            )
+        arr = arr.reshape(1, width)
+    elif arr.ndim > 2:
+        arr = arr.reshape(arr.shape[0], -1)
+    if arr.ndim != 2 or arr.shape != (WINDOW, width):
+        raise ValueError(
+            f"{name} has shape {arr.shape}; expected ({WINDOW},{width})"
+        )
+    return np.ascontiguousarray(arr, dtype=np.float32)
+
+
+STRICT_LIVE_WINDOW_METADATA = frozenset(
+    (
+        "stream_epoch",
+        "playout_seq",
+        "consumer_session",
+        "valid_horizon",
+        "clamp_slots",
+    )
+)
+
+
 class SonicTeleopPolicy:
     """SONIC _smpl.onnx policy for BXI RobotControlState integration."""
 
@@ -862,12 +891,37 @@ class SonicTeleopPolicy:
         source_age_ms = scalar("source_age_ms", None)
         playout_seq = scalar("playout_seq", None)
         consumer_session = scalar("consumer_session", None)
+        valid_horizon = scalar("valid_horizon", 0)
+        clamp_slots = scalar("clamp_slots", -1)
+        strict_live_window = any(
+            name in fields for name in STRICT_LIVE_WINDOW_METADATA
+        )
+        if strict_live_window:
+            if int(valid_horizon) != WINDOW:
+                raise ValueError(
+                    "live v4 reference must declare "
+                    f"valid_horizon={WINDOW}; got {int(valid_horizon)}"
+                )
+            if int(clamp_slots) != 0:
+                raise ValueError(
+                    "live v4 reference must declare clamp_slots=0; "
+                    f"got {int(clamp_slots)}"
+                )
+            as_live_window = _as_exact_live_window
+        else:
+            # Preserve the pre-v4 live publisher contract.  Offline playback
+            # has its own clamped cursor path in _offline_frame().
+            as_live_window = _as_window
         anchor = fields.get("anchor_quat")
         return SmplReferenceFrame(
-            term1_local=_as_window(fields["term1_local"], 72, "term1_local"),
-            root_quat=_as_window(fields["root_quat"], 4, "root_quat"),
-            wrist=_as_window(fields["wrist"], 6, "wrist"),
-            anchor_quat=_as_window(anchor, 4, "anchor_quat") if anchor is not None else None,
+            term1_local=as_live_window(fields["term1_local"], 72, "term1_local"),
+            root_quat=as_live_window(fields["root_quat"], 4, "root_quat"),
+            wrist=as_live_window(fields["wrist"], 6, "wrist"),
+            anchor_quat=(
+                as_live_window(anchor, 4, "anchor_quat")
+                if anchor is not None
+                else None
+            ),
             frame_index=int(scalar("frame_index", -1)),
             sequence=self.live_sequence,
             stream_epoch=(
@@ -880,8 +934,8 @@ class SonicTeleopPolicy:
             playback_hold=bool(scalar("playback_hold", False)),
             newest_frame_index=int(scalar("newest_frame_index", -1)),
             lead_frames=int(scalar("lead_frames", -1)),
-            valid_horizon=int(scalar("valid_horizon", 0)),
-            clamp_slots=int(scalar("clamp_slots", -1)),
+            valid_horizon=int(valid_horizon),
+            clamp_slots=int(clamp_slots),
             playout_seq=(int(playout_seq) if playout_seq is not None else None),
             consumer_session=(
                 int(consumer_session) if consumer_session is not None else None
