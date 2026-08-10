@@ -236,10 +236,10 @@ else
 fi
 
 section "Ports"
-if ss -lntup 2>/dev/null | grep -E ':(5556|5557|60061|8081)\b'; then
+if ss -lntup 2>/dev/null | grep -E ':(5556|5557|5558|60061|8081)\b'; then
   ok "SONIC/PICO-related ports listed above"
 else
-  warn "no 5556/5557/60061/8081 listeners; this is expected before SONIC/PICO starts"
+  warn "no 5556/5557/5558/60061/8081 listeners; this is expected before SONIC/PICO starts"
 fi
 
 section "Observed port 8081"

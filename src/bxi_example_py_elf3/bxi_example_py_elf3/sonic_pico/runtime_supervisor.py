@@ -180,6 +180,18 @@ class PicoPipeline:
             "BXI_SONIC_SMPL_REF_ZMQ_TOPIC",
             env.get("SMPL_REF_ZMQ_TOPIC", "smpl_ref"),
         )
+        control_host = env.get(
+            "BXI_SONIC_SMPL_REF_CONTROL_ZMQ_HOST",
+            env.get("SMPL_REF_CONTROL_HOST", "127.0.0.1"),
+        )
+        control_port = env.get(
+            "BXI_SONIC_SMPL_REF_CONTROL_ZMQ_PORT",
+            env.get("SMPL_REF_CONTROL_PORT", "5558"),
+        )
+        control_topic = env.get(
+            "BXI_SONIC_SMPL_REF_CONTROL_ZMQ_TOPIC",
+            env.get("SMPL_REF_CONTROL_TOPIC", "smpl_ref_control"),
+        )
         manager = [
             self.python_executable,
             "-m",
@@ -210,8 +222,14 @@ class PicoPipeline:
             out_port,
             "--out-topic",
             out_topic,
+            "--control-host",
+            control_host,
+            "--control-port",
+            control_port,
+            "--control-topic",
+            control_topic,
             "--stale-warning-seconds",
-            env.get("SONIC_PICO_STALE_SECONDS", "0.2"),
+            env.get("SONIC_PICO_STALE_SECONDS", "0.5"),
         ]
         if env.get("PICO_ENABLE_ROS_BUTTONS", "0").lower() not in (
             "1",

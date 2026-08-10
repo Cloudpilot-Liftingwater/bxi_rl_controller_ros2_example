@@ -164,11 +164,11 @@ else
 fi
 
 section "Relevant ports"
-if ports="$(ss -lntup 2>/dev/null | grep -E ':(8081|60061|5556|5557)\b' || true)" && \
+if ports="$(ss -lntup 2>/dev/null | grep -E ':(8081|60061|5556|5557|5558)\b' || true)" && \
    [[ -n "${ports}" ]]; then
   echo "${ports}"
 else
-  ok "8081/60061/5556/5557 are currently free"
+  ok "8081/60061/5556/5557/5558 are currently free"
 fi
 
 section "ROS environment hints"

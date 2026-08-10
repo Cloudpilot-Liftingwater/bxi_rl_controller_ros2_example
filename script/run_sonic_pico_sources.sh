@@ -18,6 +18,9 @@ PICO_PORT="${PICO_PORT:-5556}"
 SMPL_REF_ZMQ_HOST="${SMPL_REF_ZMQ_HOST:-127.0.0.1}"
 SMPL_REF_ZMQ_PORT="${SMPL_REF_ZMQ_PORT:-5557}"
 SMPL_REF_ZMQ_TOPIC="${SMPL_REF_ZMQ_TOPIC:-smpl_ref}"
+SMPL_REF_CONTROL_HOST="${BXI_SONIC_SMPL_REF_CONTROL_ZMQ_HOST:-${SMPL_REF_CONTROL_HOST:-127.0.0.1}}"
+SMPL_REF_CONTROL_PORT="${BXI_SONIC_SMPL_REF_CONTROL_ZMQ_PORT:-${SMPL_REF_CONTROL_PORT:-5558}}"
+SMPL_REF_CONTROL_TOPIC="${BXI_SONIC_SMPL_REF_CONTROL_ZMQ_TOPIC:-${SMPL_REF_CONTROL_TOPIC:-smpl_ref_control}}"
 PICO_ENABLE_ROS_BUTTONS="${PICO_ENABLE_ROS_BUTTONS:-0}"
 SONIC_PICO_USE_CUDA="${SONIC_PICO_USE_CUDA:-0}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
@@ -157,12 +160,15 @@ bridge_args=(
   --out-host "${SMPL_REF_ZMQ_HOST}"
   --out-port "${SMPL_REF_ZMQ_PORT}"
   --out-topic "${SMPL_REF_ZMQ_TOPIC}"
+  --control-host "${SMPL_REF_CONTROL_HOST}"
+  --control-port "${SMPL_REF_CONTROL_PORT}"
+  --control-topic "${SMPL_REF_CONTROL_TOPIC}"
 )
 if [[ "${PICO_ENABLE_ROS_BUTTONS}" != "1" ]]; then
   bridge_args+=(--disable-ros-pico-topics)
 fi
 
-echo "[sonic-pico-sources] starting PICO pose -> ELF3 smpl_ref bridge"
+echo "[sonic-pico-sources] starting ACK-gated PICO pose -> ELF3 smpl_ref bridge"
 setsid "${PYTHON_BIN}" "${bridge_args[@]}" &
 bridge_pid=$!
 bridge_pgid="${bridge_pid}"
@@ -173,6 +179,7 @@ echo "  bridge pid=${bridge_pid} pgid=${bridge_pgid} ros_buttons=${PICO_ENABLE_R
 echo "  controller flow: pd_brake -> normal -> sonic_teleop"
 echo "  PICO mode: CALIB_FULL / PLANNER, then POSE"
 echo "  wrist_source=elf3_native"
+echo "  stop safety: leave sonic_teleop before PICO OFF or Ctrl-C; ordinary pose loss holds the last reference window"
 
 exited_pid=""
 set +e

@@ -328,6 +328,26 @@ def test_bridge_output_env_prefers_bxi_names_with_legacy_fallback(
     assert kwargs["start_new_session"] is True
 
 
+def test_bridge_control_channel_uses_bxi_environment(monkeypatch):
+    monkeypatch.setenv("BXI_SONIC_SMPL_REF_CONTROL_ZMQ_HOST", "ack-host")
+    monkeypatch.setenv("BXI_SONIC_SMPL_REF_CONTROL_ZMQ_PORT", "6008")
+    monkeypatch.setenv("BXI_SONIC_SMPL_REF_CONTROL_ZMQ_TOPIC", "ack-topic")
+    processes = [FakeProcess(pid=451), FakeProcess(pid=452)]
+    popen_calls = []
+
+    def fake_popen(command, **kwargs):
+        popen_calls.append((command, kwargs))
+        return processes[len(popen_calls) - 1]
+
+    monkeypatch.setattr(runtime_supervisor.subprocess, "Popen", fake_popen)
+    PicoPipeline(FakeLogger(), "python3").start()
+
+    bridge_command = popen_calls[1][0]
+    assert _option(bridge_command, "--control-host") == "ack-host"
+    assert _option(bridge_command, "--control-port") == "6008"
+    assert _option(bridge_command, "--control-topic") == "ack-topic"
+
+
 def test_pico_manager_defaults_to_cpu(monkeypatch):
     processes = [FakeProcess(pid=501), FakeProcess(pid=502)]
     popen_calls = []

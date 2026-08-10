@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import queue
+import threading
 
 import numpy as np
 import pytest
@@ -91,11 +93,11 @@ class FakeWire:
         self.fields_by_message: dict[bytes, dict[str, np.ndarray]] = {}
         self.next_id = 0
 
-    def push(self, socket: FakeZmqSocket, fields: dict[str, np.ndarray]) -> None:
+    def push(self, socket, fields: dict[str, np.ndarray]) -> None:
         message = f"message-{self.next_id}".encode()
         self.next_id += 1
         self.fields_by_message[message] = fields
-        socket.messages.append(message)
+        socket.put_nowait(message)
 
     def decode(self, message: bytes, topic: str) -> dict[str, np.ndarray]:
         assert topic == "smpl_ref"
@@ -161,9 +163,22 @@ def policy_harness(tmp_path, monkeypatch):
         )
 
     def init_zmq(policy) -> None:
-        policy.zmq_context = FakeZmqContext()
-        policy.zmq_socket = FakeZmqSocket()
-        policy.zmq_poller = FakeZmqPoller(policy.zmq_socket)
+        policy.zmq_context = None
+        policy.zmq_socket = None
+        policy.zmq_control_socket = None
+        policy.zmq_poller = None
+        policy._zmq_inbound_queue = queue.Queue(maxsize=16)
+        policy._zmq_outbound_queue = queue.Queue(maxsize=64)
+        policy._zmq_stop_event = threading.Event()
+        policy._zmq_ready_event = threading.Event()
+        policy._zmq_ready_event.set()
+        policy._zmq_thread = None
+        policy._zmq_io_thread_id = None
+        policy._zmq_control_available = True
+        policy._zmq_start_error = None
+        # Preserve the old test call shape while routing bytes through the
+        # same thread-safe queue used by the production I/O thread.
+        policy.zmq_socket = policy._zmq_inbound_queue
 
     monkeypatch.setattr(sonic.SonicTeleopPolicy, "_init_onnx", init_onnx)
     monkeypatch.setattr(sonic.SonicTeleopPolicy, "_init_zmq", init_zmq)
@@ -174,6 +189,7 @@ def policy_harness(tmp_path, monkeypatch):
         model_onnx_path="mock.onnx",
         stream_reference_npz=str(reference_path),
         use_smpl_ref_zmq=True,
+        require_live_reference=False,
     )
     policy.live_ref_timeout_s = 0.5
     policy.source_blend_duration_s = 0.4
@@ -271,10 +287,10 @@ def test_ready_live_reference_switches_and_blends_over_point_four_seconds(
     assert not policy.source_blend_active
 
 
-def test_stale_live_reference_blends_back_to_idle_and_reports_transition(
+def test_stale_live_reference_holds_last_complete_window(
     policy_harness,
 ):
-    policy, session, wire, clock, term1 = policy_harness
+    policy, session, wire, clock, _ = policy_harness
     observation = _robot_observation()
 
     policy.source_blend_duration_s = 0.0
@@ -286,36 +302,22 @@ def test_stale_live_reference_blends_back_to_idle_and_reports_transition(
     policy.source_blend_duration_s = 0.4
     session.action_value = 1.0
     clock.advance(policy.live_ref_timeout_s + 0.001)
-    stale_transition_start = policy.inference_step(*observation)
+    stale_target = policy.inference_step(*observation)
 
-    assert policy.latest_live_ref is None
-    assert policy.reference_source == "idle"
-    assert policy.last_status == "live_stale_to_idle"
-    _assert_idle_reference_input(session.calls[-1], term1)
-    np.testing.assert_allclose(stale_transition_start, live_target)
-
-    clock.advance(0.2)
-    stale_transition_midpoint = policy.inference_step(*observation)
-    assert policy.last_status == "live_stale_to_idle"
+    assert policy.latest_live_ref is not None
+    assert policy.reference_source == "live"
+    assert policy.last_status == "stale_hold"
+    np.testing.assert_array_equal(session.calls[-1][0, :720], 9000.0)
     np.testing.assert_allclose(
-        stale_transition_midpoint,
-        sonic.DEFAULT_DOF_POS + 2.0 * sonic.ACTION_SCALE,
-        rtol=1.0e-6,
-        atol=1.0e-6,
-    )
-
-    clock.advance(0.201)
-    idle_target = policy.inference_step(*observation)
-    assert policy.last_status == "idle_reference"
-    np.testing.assert_allclose(
-        idle_target,
+        stale_target,
         sonic.DEFAULT_DOF_POS + sonic.ACTION_SCALE,
         rtol=1.0e-6,
         atol=1.0e-6,
     )
+    assert not np.array_equal(live_target, sonic.DEFAULT_DOF_POS)
 
 
-def test_reset_clears_live_state_drains_queued_packet_and_does_not_reuse_it(
+def test_reset_clears_live_state_and_rejects_queued_old_session_packet(
     policy_harness,
 ):
     policy, session, wire, _, term1 = policy_harness
@@ -332,9 +334,10 @@ def test_reset_clears_live_state_drains_queued_packet_and_does_not_reuse_it(
     assert policy.latest_live_ref_time == 0.0
     assert policy.live_sequence == 0
     assert policy.reference_source is None
-    assert not policy.zmq_socket.messages
+    assert not policy.zmq_socket.empty()
 
     policy.inference_step(*observation)
+    assert policy.zmq_socket.empty()
     assert policy.latest_live_ref is None
     assert policy.reference_source == "idle"
     assert policy.last_status == "idle_reference"

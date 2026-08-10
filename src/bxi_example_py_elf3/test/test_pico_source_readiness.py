@@ -198,7 +198,7 @@ def test_gate_is_not_fresh_after_stale_timeout():
     assert not gate.is_fresh(0.02 + STALE_SECONDS + 0.001, STALE_SECONDS)
 
 
-def test_stale_gate_stops_live_output_and_clears_buffered_reference():
+def test_stale_gate_holds_last_complete_buffered_reference():
     gate = PicoSourceReadinessGate()
     latest_fields = None
     for index, frame_start in enumerate((40, 41, 42)):
@@ -225,5 +225,9 @@ def test_stale_gate_stops_live_output_and_clears_buffered_reference():
         now_mono=0.02 + STALE_SECONDS + 0.001,
         stale_seconds=STALE_SECONDS,
     )
-    assert stale_ref is None
-    assert merger.timesteps == 0
+    assert stale_ref is not None
+    assert bool(stale_ref["source_ready"][0])
+    assert bool(stale_ref["source_stale"][0])
+    assert int(stale_ref["valid_horizon"][0]) == 10
+    assert int(stale_ref["clamp_slots"][0]) == 0
+    assert merger.timesteps == 10
