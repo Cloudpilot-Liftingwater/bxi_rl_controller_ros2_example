@@ -1,3 +1,4 @@
+import json
 import queue
 import threading
 import time
@@ -312,3 +313,76 @@ def test_offline_npz_mode_keeps_its_local_cursor(monkeypatch):
     assert policy.active_reference_kind == "offline"
     assert policy.motion_cursor == 2
     assert policy.stream_merger.current_frame == 0
+
+
+def test_playback_telemetry_observes_success_hold_and_failure(monkeypatch, capsys):
+    policy = _make_policy(monkeypatch)
+    _enqueue_source(policy, (0, 1, 2))
+
+    policy.preheat_step(*_observation())
+    assert policy.successful_inference_tick == 0
+    assert policy.latest_playback_telemetry is None
+
+    policy.session.fail = True
+    with pytest.raises(RuntimeError, match="synthetic inference failure"):
+        policy.inference_step(*_observation())
+    assert policy.stream_merger.current_frame == 0
+    assert policy.successful_inference_tick == 0
+    assert policy.latest_playback_telemetry is None
+
+    policy.session.fail = False
+    policy.inference_step(*_observation())
+    first = policy.latest_playback_telemetry
+    assert first.frame_index == 0
+    assert first.newest_frame_index == 11
+    assert first.lead_frames == 11
+    assert first.playback_hold is False
+    assert first.catchup_count == policy.stream_merger.catchup_count
+    assert first.stream_epoch == policy.stream_epoch
+    assert first.successful_inference_tick == 1
+    assert policy.stream_merger.current_frame == 1
+
+    same_snapshot = policy.latest_playback_telemetry
+    assert same_snapshot is first
+    assert policy.stream_merger.current_frame == 1
+
+    policy.inference_step(*_observation())
+    second = policy.latest_playback_telemetry
+    assert second.frame_index == 1
+    assert second.newest_frame_index == 11
+    assert second.lead_frames == 10
+    assert second.playback_hold is True
+    assert second.successful_inference_tick == 2
+    assert policy.stream_merger.current_frame == 1
+    assert "sonic-playback-telemetry" not in capsys.readouterr().out
+
+    policy.reset()
+    assert policy.latest_playback_telemetry is None
+    assert policy.successful_inference_tick == 2
+
+
+def test_playback_telemetry_logging_is_opt_in_json(monkeypatch, capsys):
+    monkeypatch.setenv("BXI_SONIC_TELEMETRY_LOG_EVERY", "2")
+    policy = _make_policy(monkeypatch)
+    _enqueue_source(policy, (0, 1, 2))
+
+    policy.inference_step(*_observation())
+    assert "sonic-playback-telemetry" not in capsys.readouterr().out
+
+    policy.inference_step(*_observation())
+    lines = [
+        line
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("[sonic-playback-telemetry] ")
+    ]
+    assert len(lines) == 1
+    payload = json.loads(lines[0].split(" ", 1)[1])
+    assert payload == {
+        "catchup_count": policy.stream_merger.catchup_count,
+        "frame_index": 1,
+        "lead_frames": 10,
+        "newest_frame_index": 11,
+        "playback_hold": True,
+        "stream_epoch": policy.stream_epoch,
+        "successful_inference_tick": 2,
+    }

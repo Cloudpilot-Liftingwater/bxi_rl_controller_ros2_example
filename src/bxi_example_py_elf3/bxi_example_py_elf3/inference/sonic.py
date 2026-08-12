@@ -277,6 +277,19 @@ class SmplReferenceFrame:
     clamp_slots: int = -1
 
 
+@dataclass(frozen=True, slots=True)
+class PolicyPlaybackTelemetry:
+    """Read-only observation of one successfully consumed live reference window."""
+
+    frame_index: int
+    newest_frame_index: int
+    lead_frames: int
+    playback_hold: bool
+    catchup_count: int
+    stream_epoch: Optional[int]
+    successful_inference_tick: int
+
+
 def _as_bool_env(name: str, default: bool) -> bool:
     value = os.environ.get(name)
     if value is None:
@@ -542,6 +555,11 @@ class SonicTeleopPolicy:
         self.live_reference_stale = False
         self.policy_active = False
         self.last_status = "not_started"
+        self.successful_inference_tick = 0
+        self.latest_playback_telemetry: Optional[PolicyPlaybackTelemetry] = None
+        self.telemetry_log_every = max(
+            0, int(os.environ.get("BXI_SONIC_TELEMETRY_LOG_EVERY", "0"))
+        )
 
         self._load_stream_reference()
         self._init_onnx()
@@ -754,6 +772,7 @@ class SonicTeleopPolicy:
         self.live_reference_stale = False
         self.policy_active = False
         self.last_status = "reset"
+        self.latest_playback_telemetry = None
         self.target_dof_pos = self.default_dof_pos.copy()
 
         inbound = getattr(self, "_zmq_inbound_queue", None)
@@ -1108,6 +1127,46 @@ class SonicTeleopPolicy:
         model_input[SMPL_TOKENIZER_DIM:] = proprio
         return model_input.reshape(1, -1)
 
+    def _record_playback_telemetry(
+        self,
+        frame: SmplReferenceFrame,
+        *,
+        advanced: bool,
+    ) -> None:
+        """Publish a local snapshot after, and only after, a successful live tick."""
+        self.successful_inference_tick += 1
+        telemetry = PolicyPlaybackTelemetry(
+            frame_index=int(frame.frame_index),
+            newest_frame_index=int(frame.newest_frame_index),
+            lead_frames=int(frame.lead_frames),
+            playback_hold=not bool(advanced),
+            catchup_count=int(self.stream_merger.catchup_count),
+            stream_epoch=(
+                int(frame.stream_epoch) if frame.stream_epoch is not None else None
+            ),
+            successful_inference_tick=self.successful_inference_tick,
+        )
+        self.latest_playback_telemetry = telemetry
+
+        if (
+            self.telemetry_log_every > 0
+            and self.successful_inference_tick % self.telemetry_log_every == 0
+        ):
+            payload = {
+                "frame_index": telemetry.frame_index,
+                "newest_frame_index": telemetry.newest_frame_index,
+                "lead_frames": telemetry.lead_frames,
+                "playback_hold": telemetry.playback_hold,
+                "catchup_count": telemetry.catchup_count,
+                "stream_epoch": telemetry.stream_epoch,
+                "successful_inference_tick": telemetry.successful_inference_tick,
+            }
+            print(
+                "[sonic-playback-telemetry] "
+                + json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                flush=True,
+            )
+
     def _inference_step_impl(
         self,
         q: np.ndarray,
@@ -1158,7 +1217,8 @@ class SonicTeleopPolicy:
         # Official order: gather -> successful inference/action -> advance.
         if not preheat:
             if self.active_reference_kind == "source_chunk":
-                self.stream_merger.advance_after_successful_tick()
+                advanced = self.stream_merger.advance_after_successful_tick()
+                self._record_playback_telemetry(frame, advanced=advanced)
             elif self.active_reference_kind == "offline":
                 self.motion_cursor = min(
                     self.motion_cursor + 1,
