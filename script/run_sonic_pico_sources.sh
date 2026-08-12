@@ -18,7 +18,6 @@ PICO_PORT="${PICO_PORT:-5556}"
 SMPL_REF_ZMQ_HOST="${SMPL_REF_ZMQ_HOST:-127.0.0.1}"
 SMPL_REF_ZMQ_PORT="${SMPL_REF_ZMQ_PORT:-5557}"
 SMPL_REF_ZMQ_TOPIC="${SMPL_REF_ZMQ_TOPIC:-smpl_ref}"
-WRIST_SOURCE="${WRIST_SOURCE:-pico_g1_legacy}"
 BRIDGE_LOG_EVERY="${BRIDGE_LOG_EVERY:-1}"
 PICO_ENABLE_ROS_BUTTONS="${PICO_ENABLE_ROS_BUTTONS:-0}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
@@ -36,9 +35,6 @@ if [[ -z "${manager_arg_text}" ]]; then
     --cuda
     --port "${PICO_PORT}"
   )
-  if [[ "${PICO_ENABLE_VIS:-0}" == "1" ]]; then
-    PICO_MANAGER_ARGS+=(--vis_vr3pt --vis_smpl)
-  fi
 else
   read -r -a PICO_MANAGER_ARGS <<< "${manager_arg_text}"
 fi
@@ -130,7 +126,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 trap cleanup EXIT
 
-echo "[sonic-pico-sources] starting legacy PICO manager wrapper"
+echo "[sonic-pico-sources] starting ELF3 PICO manager"
 setsid "${PYTHON_BIN}" -m bxi_example_py_elf3.sonic_pico.pico_manager_legacy \
   "${PICO_MANAGER_ARGS[@]}" &
 pico_pid=$!
@@ -154,7 +150,6 @@ bridge_args=(
   --out-host "${SMPL_REF_ZMQ_HOST}"
   --out-port "${SMPL_REF_ZMQ_PORT}"
   --out-topic "${SMPL_REF_ZMQ_TOPIC}"
-  --wrist-source "${WRIST_SOURCE}"
   --log-every "${BRIDGE_LOG_EVERY}"
 )
 if [[ "${PICO_ENABLE_ROS_BUTTONS}" != "1" ]]; then
@@ -171,7 +166,7 @@ echo "  manager pid=${pico_pid} pgid=${pico_pgid}"
 echo "  bridge pid=${bridge_pid} pgid=${bridge_pgid} ros_buttons=${PICO_ENABLE_ROS_BUTTONS}"
 echo "  controller flow: pd_brake -> normal -> sonic_teleop"
 echo "  PICO mode: CALIB_FULL / PLANNER, then POSE"
-echo "  wrist_source=${WRIST_SOURCE} (ELF3 FK path is prepared but not default yet)"
+echo "  wrist_layout=elf3_native_v1"
 echo "  stop safety: leave sonic_teleop before PICO OFF or Ctrl-C; ordinary pose loss holds the last reference window"
 
 exited_pid=""

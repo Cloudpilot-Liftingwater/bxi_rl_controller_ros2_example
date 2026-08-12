@@ -1,25 +1,9 @@
-# Pico SMPL stream server for body tracking visualization
+# PICO SMPL stream server for the ELF3 commercial runtime.
 
 """
 
-# Recommended Command Line Arguments:
-    # With VR3 PT visualization (by --vis_vr3pt) and optional SMPL body visualization (by --vis_smpl)
-    # If you want to enable waist tracking in the VR3 PT visualization, please add --waist_tracking
-    python pico_manager_thread_server.py --manager \
-        --vis_vr3pt --vis_smpl \
-        --waist_tracking
-
-    # VR3 PT visualization only (without SMPL body) — lower latency
-    python pico_manager_thread_server.py --manager --vis_vr3pt
-
-# DEBUG VR3 PT VISUALIZATION:
-    # A standalone test mode that captures one live frame and visualizes it.
-    python pico_manager_thread_server.py --vr3pt_live
-
-# TIMING COMPARISON:
-    # The visualizer automatically reports timing every 5 seconds when running:
-    #   [Vis Timing] vr3pt: X.XXms | smpl: X.XXms | render: X.XXms | vr3pt_only: X.XXms | both(vr3pt+smpl): X.XXms
-
+Run the canonical supervisor instead of invoking this module directly:
+``script/run_sonic_pico_sources.sh``.
 """
 
 import atexit
@@ -33,14 +17,11 @@ import tempfile
 import threading
 import time
 
-import msgpack
 import numpy as np
-from scipy.spatial.transform import Rotation as R, Rotation as sRot
+from scipy.spatial.transform import Rotation as sRot
 import torch
 import zmq
 
-from gear_sonic.utils.teleop.zmq.zmq_poller import ZMQPoller
-from gear_sonic.trl.utils.rotation_conversion import decompose_rotation_aa
 from gear_sonic.trl.utils.torch_transform import (
     angle_axis_to_quaternion,
     compute_human_joints,
@@ -80,25 +61,12 @@ try:
 except ImportError:
     xrt = None
 
-try:
-    from gear_sonic.utils.teleop.solver.hand.g1_gripper_ik_solver import (
-        G1GripperInverseKinematicsSolver,
-    )
-except ImportError:
-    print("Warning: G1GripperInverseKinematicsSolver not available.")
-    G1GripperInverseKinematicsSolver = None
-
-try:
-    from gear_sonic.utils.teleop.vis.vr3pt_pose_visualizer import VR3PtPoseVisualizer
-except ImportError:
-    print("Warning: VR3PtPoseVisualizer not available (pyvista may not be installed).")
-    VR3PtPoseVisualizer = None
-
-try:
-    from gear_sonic.utils.teleop.vis.vr3pt_pose_visualizer import get_g1_key_frame_poses
-except ImportError:
-    print("Warning: get_g1_key_frame_poses not available (pyvista may not be installed).")
-    get_g1_key_frame_poses = None
+from bxi_example_py_elf3.sonic_pico.elf3_fk_calibration import Elf3FkCalibration
+from bxi_example_py_elf3.sonic_pico.elf3_wrist_mapping import (
+    ELF3_WRIST_LAYOUT_VERSION,
+    compute_elf3_wrist_features,
+    pack_sonic_wrist_transport,
+)
 
 
 XRT_SERVICE_SCRIPT = "/opt/apps/roboticsservice/runService.sh"
@@ -304,9 +272,7 @@ class StreamMode(Enum):
     OFF = 0
     POSE = 1
     PLANNER = 2
-    PLANNER_FROZEN_UPPER_BODY = 3
     POSE_PAUSE = 4
-    PLANNER_VR_3PT = 5
 
 
 ### Parse 3 point pose from SMPL
@@ -494,126 +460,6 @@ def _process_3pt_pose(smpl_pose_np):
     return kp_poses[1:]
 
 
-# =============================================================================
-# VR 3-Point Pose Visualization Functions
-# =============================================================================
-
-
-def run_vr3pt_visualizer_test():
-    """
-    Standalone test for VR 3-point pose visualizer using PyVista.
-    Run this to verify the reference frames are displayed correctly.
-    """
-    if VR3PtPoseVisualizer is None:
-        raise ImportError("VR3PtPoseVisualizer not available. Install pyvista: pip install pyvista")
-
-    print("=" * 60)
-    print("VR 3-Point Pose Visualizer Test (PyVista)")
-    print("=" * 60)
-    print("\nExpected reference frames (all with RGB axes for XYZ):")
-    print("  1. WHITE ball at origin (0, 0, 0) - World frame")
-    print("  2. CYAN ball at (0, 0, 0.35) - Looking forward (identity)")
-    print("  3. MAGENTA ball at (0, 0.4, 0.25) - Looking left (yaw +90°)")
-    print("  4. YELLOW ball at (0.4, 0, 0.15) - Looking down (pitch +90°)")
-    print("\nClose the window to exit.")
-    print("=" * 60)
-
-    visualizer = VR3PtPoseVisualizer(axis_length=0.08, ball_radius=0.015, with_g1_robot=True)
-    visualizer.show_static()
-
-
-def run_vr3pt_live_visualizer():
-    """
-    Live visualizer for real VR 3-point pose data from Pico.
-    Captures one frame from Pico and displays it alongside reference frames.
-    """
-    if xrt is None:
-        raise ImportError(
-            "XRoboToolkit SDK not available. Install xrobotoolkit_sdk to use live visualizer."
-        )
-
-    if VR3PtPoseVisualizer is None:
-        raise ImportError("VR3PtPoseVisualizer not available. Install pyvista: pip install pyvista")
-
-    print("=" * 60)
-    print("VR 3-Point Pose Live Visualizer (PyVista)")
-    print("=" * 60)
-
-    # Initialize XRT
-    _start_xrt_and_wait_for_body_data("VR3PtLive")
-
-    print("Body data available! Capturing VR 3-point pose...")
-
-    # Capture body poses and compute vr_3pt_pose
-    body_poses = xrt.get_body_joints_pose()
-    body_poses_np = np.array(body_poses)
-
-    # Process to get 3-point pose (L-Wrist, R-Wrist, Neck)
-    vr_3pt_pose = _process_3pt_pose(body_poses_np)
-
-    print(f"\nCaptured vr_3pt_pose shape: {vr_3pt_pose.shape}")
-    print(f"  L-Wrist: pos={vr_3pt_pose[0, :3]}, quat_wxyz={vr_3pt_pose[0, 3:]}")
-    print(f"  R-Wrist: pos={vr_3pt_pose[1, :3]}, quat_wxyz={vr_3pt_pose[1, 3:]}")
-    print(f"  Neck:    pos={vr_3pt_pose[2, :3]}, quat_wxyz={vr_3pt_pose[2, 3:]}")
-
-    print("\nDisplaying visualization...")
-    print("Close the window to exit.")
-    print("=" * 60)
-
-    visualizer = VR3PtPoseVisualizer(axis_length=0.08, ball_radius=0.015, with_g1_robot=True)
-    visualizer.show_with_vr_pose(vr_3pt_pose)
-
-
-def run_vr3pt_realtime_visualizer(update_hz: int = 10):
-    """
-    Real-time visualizer for VR 3-point pose data from Pico.
-    Continuously updates the visualization with live data.
-
-    Args:
-        update_hz: Update rate in Hz (default 10)
-    """
-    if xrt is None:
-        raise ImportError(
-            "XRoboToolkit SDK not available. Install xrobotoolkit_sdk to use realtime visualizer."
-        )
-
-    if VR3PtPoseVisualizer is None:
-        raise ImportError("VR3PtPoseVisualizer not available. Install pyvista: pip install pyvista")
-
-    print("=" * 60)
-    print("VR 3-Point Pose Real-time Visualizer (PyVista)")
-    print("=" * 60)
-
-    # Initialize XRT
-    _start_xrt_and_wait_for_body_data("VR3PtRealtime")
-
-    print("Body data available! Starting real-time visualization...")
-    print(f"Update rate: {update_hz} Hz")
-    print("Close the window or press 'q' to exit.")
-    print("=" * 60)
-
-    # Use the VR3PtPoseVisualizer for real-time visualization with G1 robot
-    visualizer = VR3PtPoseVisualizer(axis_length=0.08, ball_radius=0.015, with_g1_robot=True)
-    visualizer.create_realtime_plotter(interactive=True)
-
-    try:
-        while visualizer.is_open:
-            # Get new data from Pico
-            body_poses = xrt.get_body_joints_pose()
-            body_poses_np = np.array(body_poses)
-            vr_3pt_pose = _process_3pt_pose(body_poses_np)
-
-            # Update visualization
-            visualizer.update_vr_poses(vr_3pt_pose)
-            visualizer.render()
-
-            time.sleep(1.0 / update_hz)
-    except KeyboardInterrupt:
-        print("\nInterrupted by user")
-    finally:
-        visualizer.close()
-
-
 def process_smpl_joints(body_pose, global_orient, transl):
     """Process SMPL parameters to compute local joints.
 
@@ -654,30 +500,6 @@ def process_smpl_joints(body_pose, global_orient, transl):
         "global_orient_6d": global_orient_6d,
         "adjusted_transl": transl,
     }
-
-
-def generate_finger_data(hand: str, trigger: float, grip: float) -> np.ndarray:
-    """
-    Generate finger position data from Pico controller button states.
-
-    Args:
-        hand: "left" or "right"
-        trigger: Trigger button value (0-1)
-        grip: Grip button value (0-1)
-
-    Returns:
-        Array of shape [25, 4, 4] representing fingertip positions
-    """
-    fingertips = np.zeros([25, 4, 4])
-
-    thumb = 0
-    middle = 10
-    # Control thumb based on shoulder button state (index 4 is thumb tip)
-    fingertips[4 + thumb, 0, 3] = 1.0  # open thumb
-    if trigger > 0.5:
-        fingertips[4 + middle, 0, 3] = 1.0  # close middle
-
-    return fingertips
 
 
 # Joystick deadzone threshold
@@ -761,17 +583,6 @@ def compute_from_body_poses(parent_indices: list, device, body_poses_np: np.ndar
 #     body_poses = xrt.get_body_joints_pose()
 #     body_poses_np = np.array(body_poses)
 #     return compute_from_body_poses(parent_indices, device, body_poses_np)
-
-
-def init_hand_ik_solvers():
-    """Initialize hand IK solvers if available."""
-    if G1GripperInverseKinematicsSolver is not None:
-        left_solver = G1GripperInverseKinematicsSolver(side="left")
-        right_solver = G1GripperInverseKinematicsSolver(side="right")
-        print("Hand IK solvers initialized")
-        return left_solver, right_solver
-    print("Warning: Hand IK solvers not available")
-    return None, None
 
 
 def get_controller_inputs():
@@ -858,21 +669,6 @@ def get_abxy_buttons():
         return a_pressed, b_pressed, x_pressed, y_pressed
     except Exception:
         return False, False, False, False
-
-
-def compute_hand_joints_from_inputs(
-    left_solver, right_solver, left_trigger, left_grip, right_trigger, right_grip
-) -> tuple[np.ndarray, np.ndarray]:
-    """Compute left/right hand joints using IK solvers, or zeros if unavailable."""
-    if left_solver is not None and right_solver is not None:
-        left_finger_data = generate_finger_data("left", left_trigger, left_grip)
-        right_finger_data = generate_finger_data("right", right_trigger, right_grip)
-        left_hand_joints = left_solver({"position": left_finger_data})
-        right_hand_joints = right_solver({"position": right_finger_data})
-    else:
-        left_hand_joints = np.zeros((1, 7), dtype=np.float32)
-        right_hand_joints = np.zeros((1, 7), dtype=np.float32)
-    return left_hand_joints, right_hand_joints
 
 
 def _quat_lerp_normalized(q0: np.ndarray, q1: np.ndarray, alpha: float) -> np.ndarray:
@@ -1255,10 +1051,6 @@ def _pose_stream_common(
     record_format: str,
     stop_event: threading.Event | None = None,
     log_prefix: str = "PoseLoop",
-    enable_vis_vr3pt: bool = False,
-    with_g1_robot: bool = True,
-    enable_waist_tracking: bool = False,
-    enable_smpl_vis: bool = False,
     raw_recorder: _RawPicoFrameRecorder | None = None,
 ):
     """Shared pose streaming loop used by run_pico."""
@@ -1271,14 +1063,9 @@ def _pose_stream_common(
     reader = PicoReader(max_queue_size=buffer_size, raw_recorder=raw_recorder)
     reader.start()
 
-    # Create 3-point pose processor with visualization settings
-    three_point = ThreePointPose(
-        enable_vis_vr3pt=enable_vis_vr3pt,
-        with_g1_robot=with_g1_robot,
-        enable_waist_tracking=enable_waist_tracking,
-        enable_smpl_vis=enable_smpl_vis,
-        log_prefix=log_prefix,
-    )
+    # The calibration provider builds only the ELF3 kinematic tree.  It does
+    # not instantiate another robot model or load any visual/collision mesh.
+    three_point = ThreePointPose(log_prefix=log_prefix)
 
     streamer = PoseStreamer(
         socket=socket,
@@ -1312,75 +1099,32 @@ class ThreePointPose:
 
     This includes:
     - Processing SMPL poses to extract 3-point VR pose (L-Wrist, R-Wrist, Neck)
-    - Calibration logic to align VR poses with G1 robot
-    - Optional visualization of 3-point poses
+    - Calibration logic to align VR poses with ELF3 FK
 
     Calibration is done in two steps:
     1. Neck orientation: Captures initial neck orientation to align subsequent poses as upright
-    2. Wrist positions: Aligns wrist positions to match G1 robot key frame positions
+    2. Wrist positions: Aligns wrist positions to ELF3 key frames
     """
 
-    # Kinematic chain constants for neck position (matches VR3PtPoseVisualizer)
+    # Kinematic chain constants retained by the existing three-point protocol.
     TORSO_LINK_OFFSET_Z = 0.05  # meters from root to torso_link
     NECK_LINK_LENGTH = 0.35  # meters from torso_link to neck along neck's local Z
 
     def __init__(
         self,
-        enable_vis_vr3pt: bool = False,
-        with_g1_robot: bool = True,
-        enable_waist_tracking: bool = False,
-        enable_smpl_vis: bool = False,
         log_prefix: str = "ThreePointPose",
-        robot_model=None,
+        fk_provider: Elf3FkCalibration | None = None,
     ):
         """
         Initialize 3-point pose processor.
 
         Args:
-            enable_vis_vr3pt: Whether to enable VR 3pt pose visualization (requires display)
-            with_g1_robot: Whether to include G1 robot in visualization
-            enable_waist_tracking: Whether to enable waist tracking in visualization
-            enable_smpl_vis: Whether to render SMPL body joints in the VR3pt visualizer
             log_prefix: Prefix for log messages
-            robot_model: Optional pre-instantiated RobotModel. If None, will create one.
-                        Used for FK-based calibration (no display required).
+            fk_provider: Optional mesh-free ELF3 FK provider for tests/injection.
         """
         self.log_prefix = log_prefix
-        self.with_g1_robot = with_g1_robot
-        self.enable_waist_tracking = enable_waist_tracking
-        self.enable_smpl_vis = enable_smpl_vis
-
-        # Robot model for FK-based calibration (headless, no display required)
-        self._robot_model = robot_model
-        if self._robot_model is None:
-            from gear_sonic.data.robot_model.instantiation.g1 import (
-                instantiate_g1_robot_model,
-            )
-
-            self._robot_model = instantiate_g1_robot_model()
-            print(f"[{log_prefix}] Robot model loaded for FK calibration")
-
-        # Optional visualization (requires display + PyVista)
-        self.vr3pt_visualizer = None
-        if enable_vis_vr3pt:
-            if VR3PtPoseVisualizer is None:
-                raise ImportError(
-                    "VR3PtPoseVisualizer could not be imported but --vis_vr3pt was requested. "
-                    "Ensure pyvista is installed: pip install pyvista"
-                )
-            self.vr3pt_visualizer = VR3PtPoseVisualizer(
-                axis_length=0.08,
-                ball_radius=0.015,
-                with_g1_robot=with_g1_robot,
-                robot_model=self._robot_model,
-                enable_waist_tracking=enable_waist_tracking,
-                enable_smpl_vis=enable_smpl_vis,
-            )
-            self.vr3pt_visualizer.create_realtime_plotter(interactive=True)
-            g1_str = " with G1 robot" if with_g1_robot else ""
-            waist_str = " + waist tracking" if enable_waist_tracking else ""
-            smpl_str = " + SMPL body" if enable_smpl_vis else ""
-            print(f"[{log_prefix}] VR 3pt pose visualization enabled{g1_str}{waist_str}{smpl_str}")
+        self._fk_provider = fk_provider or Elf3FkCalibration.from_default_urdf()
+        print(f"[{log_prefix}] ELF3 kinematic model loaded for FK calibration")
 
         # Calibration state — triggered explicitly by calibrate_now() or reset_with_measured_q()
         self._calibration_pending = False
@@ -1430,21 +1174,10 @@ class ThreePointPose:
         # Apply calibration to get the final pose
         vr_3pt_pose = self._apply_calibration(vr_3pt_pose_raw)
 
-        if self.vr3pt_visualizer is not None:
-            self.vr3pt_visualizer.update_from_vr_pose(vr_3pt_pose, waist_scale=1.0)
-            if smpl_joints_local is not None:
-                self.vr3pt_visualizer.update_smpl_joints(smpl_joints_local)
-            self.vr3pt_visualizer.render()
-
         return vr_3pt_pose
 
     def close(self) -> None:
-        """Close and cleanup visualizer resources."""
-        if self.vr3pt_visualizer is not None:
-            try:
-                self.vr3pt_visualizer.close()
-            except Exception as e:
-                print(f"[{self.log_prefix}] Warning: Error closing VR3pt visualizer: {e}")
+        """Compatibility no-op; the mesh-free FK provider owns no GUI resource."""
 
     def calibrate_now(self, body_poses_np: np.ndarray) -> bool:
         """Calibrate using current SMPL frame against FK of all-zero body joints.
@@ -1463,7 +1196,7 @@ class ThreePointPose:
             return False
 
     def _capture_calibration(self, vr_3pt_pose: np.ndarray) -> None:
-        """Capture calibration offsets from vr_3pt_pose against G1 FK reference.
+        """Capture calibration offsets from vr_3pt_pose against ELF3 FK reference.
         If neck calibration already exists (e.g. from calibrate_now), it is preserved
         to avoid jumps from SMPL noise during recalibration."""
 
@@ -1480,49 +1213,32 @@ class ThreePointPose:
         lwrist_rot_corrected = calib_inv_rot * sRot.from_quat(vr_3pt_pose[0, 3:], scalar_first=True)
         rwrist_rot_corrected = calib_inv_rot * sRot.from_quat(vr_3pt_pose[1, 3:], scalar_first=True)
 
-        # Step 3: Get G1 FK reference poses
-        if self._robot_model is None:
-            raise RuntimeError(
-                "Robot model is required for calibration but was not loaded. "
-                "Ensure the G1 robot model and URDF are available."
-            )
-        if get_g1_key_frame_poses is None:
-            raise RuntimeError(
-                "get_g1_key_frame_poses could not be imported. "
-                "Ensure gear_sonic.utils.teleop.vis.vr3pt_pose_visualizer is available."
-            )
+        # Step 3: Get mesh-free, anchor-local ELF3 FK reference poses.
+        had_override = self._override_robot_q is not None
+        elf3_poses = self._fk_provider.key_frame_poses(body_q=self._override_robot_q)
 
-        # Convert 29-DOF override to full model config if needed
-        if self._override_robot_q is not None:
-            robot_q = self._robot_model.get_configuration_from_actuated_joints(
-                body_actuated_joint_values=self._override_robot_q[:29]
-            )
-        else:
-            robot_q = None
-        g1_poses = get_g1_key_frame_poses(self._robot_model, q=robot_q)
-
-        g1_lwrist_pos = g1_poses["left_wrist"]["position"]
-        g1_rwrist_pos = g1_poses["right_wrist"]["position"]
-        g1_lwrist_rot = sRot.from_quat(
-            g1_poses["left_wrist"]["orientation_wxyz"], scalar_first=True
+        elf3_lwrist_pos = elf3_poses["left_wrist"]["position"]
+        elf3_rwrist_pos = elf3_poses["right_wrist"]["position"]
+        elf3_lwrist_rot = sRot.from_quat(
+            elf3_poses["left_wrist"]["orientation_wxyz"], scalar_first=True
         )
-        g1_rwrist_rot = sRot.from_quat(
-            g1_poses["right_wrist"]["orientation_wxyz"], scalar_first=True
+        elf3_rwrist_rot = sRot.from_quat(
+            elf3_poses["right_wrist"]["orientation_wxyz"], scalar_first=True
         )
 
         # Compute position offsets: calibrated = neck_corrected - offset
-        self._calibration_lwrist_offset = lwrist_pos_corrected - g1_lwrist_pos
-        self._calibration_rwrist_offset = rwrist_pos_corrected - g1_rwrist_pos
+        self._calibration_lwrist_offset = lwrist_pos_corrected - elf3_lwrist_pos
+        self._calibration_rwrist_offset = rwrist_pos_corrected - elf3_rwrist_pos
 
         # Compute orientation offsets: calibrated = rot_offset * neck_corrected
-        self._calibration_lwrist_rot_offset = g1_lwrist_rot * lwrist_rot_corrected.inv()
-        self._calibration_rwrist_rot_offset = g1_rwrist_rot * rwrist_rot_corrected.inv()
+        self._calibration_lwrist_rot_offset = elf3_lwrist_rot * lwrist_rot_corrected.inv()
+        self._calibration_rwrist_rot_offset = elf3_rwrist_rot * rwrist_rot_corrected.inv()
 
         self._calibration_pending = False
         self._override_robot_q = None
 
         # Log summary
-        source = "override q" if g1_lwrist_pos.any() else "default/zero"
+        source = "override q" if had_override else "default/zero"
         print(
             f"[{self.log_prefix}] Calibration captured (FK ref: {source}):\n"
             f"  L-Wrist pos offset: [{self._calibration_lwrist_offset[0]:.4f}, "
@@ -1636,7 +1352,6 @@ class PoseStreamer:
             os.makedirs(record_dir, exist_ok=True)
         self.record_idx = 0
 
-        self.left_hand_ik_solver, self.right_hand_ik_solver = init_hand_ik_solvers()
         self.parent_indices = [
             -1,
             0,
@@ -1733,14 +1448,11 @@ class PoseStreamer:
         self.toggle_data_collection_last = toggle_data_collection_tmp
         self.toggle_data_abort_last = toggle_data_abort_tmp
 
-        left_hand_joints, right_hand_joints = compute_hand_joints_from_inputs(
-            self.left_hand_ik_solver,
-            self.right_hand_ik_solver,
-            left_trigger,
-            left_grip,
-            right_trigger,
-            right_grip,
-        )
+        # The commercial ELF3 full-body profile has no robot-specific hand-IK dependency.
+        # Keep zero-valued compatibility fields because some recorders inspect
+        # them, while the SONIC full-body bridge does not consume them.
+        left_hand_joints = np.zeros(7, dtype=np.float32)
+        right_hand_joints = np.zeros(7, dtype=np.float32)
         smpl_pose_np = (
             latest_data["smpl_pose"].detach().cpu().numpy()[:, :63].reshape(-1, 21, 3)[0]
         ).astype(np.float32)
@@ -1782,83 +1494,21 @@ class PoseStreamer:
         )
         N = len(self.frame_buffer["frame_index"])
 
-        ##### From @Jiefeng for directly setting the joint position ######
-        joint_pos = np.zeros(29)
+        # Derive native ELF3 wrist features.  ``joint_pos`` remains a temporary
+        # wire-compatibility container so the unchanged Bridge produces the
+        # exact same six wrist inputs as the validated runtime.
         body_pose = use_pose.reshape(-1, 21, 3)
-
-        SMPL_L_ELBOW_IDX = 17
-        SMPL_L_WRIST_IDX = 19
-        SMPL_R_ELBOW_IDX = 18
-        SMPL_R_WRIST_IDX = 20
-
-        # G1_L_ELBOW_IDX = 0
-        G1_L_WRIST_ROLL_IDX = 23
-        G1_L_WRIST_PITCH_IDX = 25
-        G1_L_WRIST_YAW_IDX = 27
-
-        # G1_R_ELBOW_IDX = 0
-        G1_R_WRIST_ROLL_IDX = 24  # Done
-        G1_R_WRIST_PITCH_IDX = 26
-        G1_R_WRIST_YAW_IDX = 28
-        smpl_l_elbow_aa = body_pose[:, SMPL_L_ELBOW_IDX]
-        smpl_l_wrist_aa = body_pose[:, SMPL_L_WRIST_IDX]
-        smpl_r_elbow_aa = body_pose[:, SMPL_R_ELBOW_IDX]
-        smpl_r_wrist_aa = body_pose[:, SMPL_R_WRIST_IDX]
-
-        g1_l_elbow_axis = np.array([0, 1, 0])
-        g1_l_elbow_q_twist, g1_l_elbow_q_swing = decompose_rotation_aa(
-            smpl_l_elbow_aa, g1_l_elbow_axis
-        )
-
-        g1_r_elbow_axis = np.array([0, 1, 0])
-        g1_r_elbow_q_twist, g1_r_elbow_q_swing = decompose_rotation_aa(
-            smpl_r_elbow_aa, g1_r_elbow_axis
-        )
-
-        # Move elbow roll/yaw into wrist while preserving wrist pitch from SMPL
-        l_elbow_swing_euler = R.from_quat(g1_l_elbow_q_swing[:, [1, 2, 3, 0]]).as_euler(
-            "XYZ", degrees=False
-        )
-        r_elbow_swing_euler = R.from_quat(g1_r_elbow_q_swing[:, [1, 2, 3, 0]]).as_euler(
-            "XYZ", degrees=False
-        )
-
-        l_wrist_euler = R.from_rotvec(smpl_l_wrist_aa).as_euler("XYZ", degrees=False)
-        r_wrist_euler = R.from_rotvec(smpl_r_wrist_aa).as_euler("XYZ", degrees=False)
-
-        g1_l_wrist_roll = l_elbow_swing_euler[:, 0] + l_wrist_euler[:, 0]
-        g1_l_wrist_pitch = -l_wrist_euler[:, 1]
-        g1_l_wrist_yaw = l_elbow_swing_euler[:, 2] + l_wrist_euler[:, 2]
-
-        g1_r_wrist_roll = -(r_elbow_swing_euler[:, 0] + r_wrist_euler[:, 0])
-        g1_r_wrist_pitch = -r_wrist_euler[:, 1]
-        g1_r_wrist_yaw = r_elbow_swing_euler[:, 2] + r_wrist_euler[:, 2]
-
-        joint_pos[G1_L_WRIST_ROLL_IDX] = g1_l_wrist_roll[0]
-        joint_pos[G1_L_WRIST_PITCH_IDX] = -g1_l_wrist_pitch[0]
-        joint_pos[G1_L_WRIST_YAW_IDX] = g1_l_wrist_yaw[0]
-
-        joint_pos[G1_R_WRIST_ROLL_IDX] = g1_r_wrist_roll[0]
-        joint_pos[G1_R_WRIST_PITCH_IDX] = g1_r_wrist_pitch[0]
-        joint_pos[G1_R_WRIST_YAW_IDX] = g1_r_wrist_yaw[0]
+        wrist = compute_elf3_wrist_features(body_pose)[0]
+        joint_pos = pack_sonic_wrist_transport(wrist)
 
         # Process SMPL pose to get calibrated 3-point VR pose and update visualization
-        # Pass SMPL local joints for optional body visualization in the VR3Pt viewer
-        smpl_joints_for_vis = (
-            latest_data["smpl_joints_local"].detach().cpu().numpy()[0]
-            if self.three_point.enable_smpl_vis
-            else None
-        )
-        vr_3pt_pose = self.three_point.process_smpl_pose(
-            sample["body_poses_np"], smpl_joints_local=smpl_joints_for_vis
-        )
-        ##### From @Jiefeng for directly setting the joint position ######
-
+        vr_3pt_pose = self.three_point.process_smpl_pose(sample["body_poses_np"])
         self.frame_buffer["smpl_pose"].append(use_pose)
         self.frame_buffer["smpl_joints"].append(use_joints)
         self.frame_buffer["body_quat_w"].append(use_body_quat)
         self.frame_buffer["frame_index"].append(int(self.step))
         self.frame_buffer["joint_pos"].append(joint_pos)
+        self.frame_buffer["wrist"].append(wrist)
         pico_dt = float(sample.get("dt", 0.0))
         pico_fps = float(sample.get("fps", 0.0))
         N = len(self.frame_buffer["frame_index"])
@@ -1880,6 +1530,10 @@ class PoseStreamer:
                 "smpl_joints": np.stack((self.frame_buffer["smpl_joints"]), axis=0),
                 "body_quat_w": np.stack((self.frame_buffer["body_quat_w"]), axis=0),
                 "joint_pos": np.stack((self.frame_buffer["joint_pos"]), axis=0),
+                "wrist": np.stack((self.frame_buffer["wrist"]), axis=0),
+                "wrist_layout_version": np.array(
+                    [ELF3_WRIST_LAYOUT_VERSION], dtype=np.int32
+                ),
                 "joint_vel": np.zeros((N, 29)),
                 "vr_position": vr_3pt_pose[:, :3].flatten(),
                 "vr_orientation": vr_3pt_pose[:, 3:].flatten(),
@@ -1940,10 +1594,6 @@ def run_pico(
     use_cuda: bool = False,
     record_dir: str = "",
     record_format: str = "npz",
-    enable_vis_vr3pt: bool = False,
-    with_g1_robot: bool = True,
-    enable_waist_tracking: bool = False,
-    enable_smpl_vis: bool = False,
     raw_record_path: str = "",
     raw_record_max_frames: int = RAW_PICO_RECORD_DEFAULT_MAX_FRAMES,
     stop_event: threading.Event | None = None,
@@ -1991,10 +1641,6 @@ def run_pico(
             record_format=record_format,
             stop_event=stop_event,
             log_prefix="Main",
-            enable_vis_vr3pt=enable_vis_vr3pt,
-            with_g1_robot=with_g1_robot,
-            enable_waist_tracking=enable_waist_tracking,
-            enable_smpl_vis=enable_smpl_vis,
             raw_recorder=raw_recorder,
         )
     finally:
@@ -2012,92 +1658,15 @@ def run_pico(
         print("Threads stopped, ZMQ socket closed")
 
 
-class FeedbackReader:
-    """Reads feedback from robot via ZMQ and processes measured upper body position to use as frozen targets."""
-
-    def __init__(self, zmq_feedback_host: str = "localhost", zmq_feedback_port: int = 5557):
-        self.poller = ZMQPoller(host=zmq_feedback_host, port=zmq_feedback_port, topic="g1_debug")
-
-        self.upper_body_joint_indices = self._get_upper_body_joint_indices()
-
-        self.upper_body_position_target = None
-        self.left_hand_position_target = None
-        self.right_hand_position_target = None
-        # Full body joint configuration (29 DOFs) as measured from robot,
-        # used for FK when recalibrating VR 3PT tracking against actual robot pose
-        self.full_body_q_measured: np.ndarray | None = None
-
-    def _get_upper_body_joint_indices(self) -> list[int]:
-        # TODO: get from robot model, not hardcoded
-        # robot_model = instantiate_g1_robot_model()
-        # return robot_model.get_joint_group_indices("upper_body")
-        return [12, 13, 14, 15, 22, 16, 23, 17, 24, 18, 25, 19, 26, 20, 27, 21, 28]
-
-    def poll_feedback(self):
-        """Poll for feedback once, and update internal state."""
-        (
-            self.upper_body_position_target,
-            self.left_hand_position_target,
-            self.right_hand_position_target,
-            self.full_body_q_measured,
-        ) = self._process_upper_body_position_targets()
-        print("[PlannerLoop] Saved upper body position target:", self.upper_body_position_target)
-
-    def close(self) -> None:
-        self.poller.close()
-
-    def _process_upper_body_position_targets(
-        self,
-    ) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None, np.ndarray | None]:
-        data = self.poller.get_data()
-
-        if data is None:
-            print("[PlannerLoop] No feedback data received")
-            return None, None, None, None
-
-        unpacked = msgpack.unpackb(data, raw=False)
-        full_body_q = None
-        if "body_q_measured" in unpacked:
-            body_q_swizzled = unpacked["body_q_measured"]
-            full_body_q = np.array(body_q_swizzled, dtype=np.float64)
-            body_q = [body_q_swizzled[i] for i in self.upper_body_joint_indices]
-        else:
-            print("[PlannerLoop] body_q_measured not in feedback data")
-            body_q = None
-
-        if "left_hand_q_measured" in unpacked:
-            left_hand_q = unpacked["left_hand_q_measured"]
-        else:
-            print("[PlannerLoop] left_hand_q_measured not in feedback data")
-            left_hand_q = None
-
-        if "right_hand_q_measured" in unpacked:
-            right_hand_q = unpacked["right_hand_q_measured"]
-        else:
-            print("[PlannerLoop] right_hand_q_measured not in feedback data")
-            right_hand_q = None
-
-        return body_q, left_hand_q, right_hand_q, full_body_q
-
-
 class PlannerStreamer:
     """Encapsulates the planner control loop state and logic."""
 
     def __init__(
         self,
         socket,
-        reader: PicoReader,
-        three_point: ThreePointPose,
         poll_hz: int = 20,
-        zmq_feedback_host: str = "localhost",
-        zmq_feedback_port: int = 5557,
     ):
         self.socket = socket
-        self.reader = reader
-        self.three_point = three_point
-        self.feedback_reader = FeedbackReader(
-            zmq_feedback_host=zmq_feedback_host, zmq_feedback_port=zmq_feedback_port
-        )
 
         self.dt = 1.0 / max(1, poll_hz)
         # Current locomotion mode, default IDLE
@@ -2109,39 +1678,12 @@ class PlannerStreamer:
         self.last_send = time.time()
         self.last_xrt_timestamp = None
 
-        # Hand IK solvers for trigger-controlled hand open/close in VR 3PT mode
-        self.left_hand_ik_solver, self.right_hand_ik_solver = init_hand_ik_solvers()
-
     def reset_yaw(self):
         """Called when entering planner mode. Resets state for fresh start."""
         self.yaw_accumulator.reset()
 
     def close(self) -> None:
-        self.feedback_reader.close()
-
-    def save_upper_body_position_target(self):
-        """Poll feedback and save upper body position target."""
-        self.feedback_reader.poll_feedback()
-
-    def recalibrate_for_vr3pt(self):
-        """
-        Recalibrate VR 3-point pose tracking using the robot's current measured joints.
-
-        Polls the g1_debug feedback to get the robot's actual joint state, then
-        schedules recalibration so VR tracking aligns with the robot's current pose.
-        This prevents sudden jumps when entering VR 3PT mode from PLANNER mode.
-        """
-        self.feedback_reader.poll_feedback()
-        if self.feedback_reader.full_body_q_measured is not None:
-            self.three_point.reset_with_measured_q(self.feedback_reader.full_body_q_measured)
-            print("[PlannerLoop] VR 3PT recalibration scheduled with measured robot pose")
-        else:
-            # Fallback: use zeros if no feedback available
-            print(
-                "[PlannerLoop] WARNING: No feedback data for VR 3PT recalibration, "
-                "using zero body_q as fallback"
-            )
-            self.three_point.reset_with_measured_q(np.zeros(29, dtype=np.float64))
+        """Compatibility no-op; minimal locomotion planner owns no subscriber."""
 
     def run_once(self, stream_mode: StreamMode):
         """Execute one iteration of the planner control loop."""
@@ -2201,57 +1743,12 @@ class PlannerStreamer:
 
             movement = [movement_global[0], movement_global[1], 0.0]
 
-            upper_body_position = None
-            left_hand_position = None
-            right_hand_position = None
-            if stream_mode == StreamMode.PLANNER_FROZEN_UPPER_BODY:
-                upper_body_position = self.feedback_reader.upper_body_position_target
-                left_hand_position = self.feedback_reader.left_hand_position_target
-                right_hand_position = self.feedback_reader.right_hand_position_target
-
-            vr_3pt_position = None
-            vr_3pt_orientation = None
-            vr_3pt_compliance = None
-            if stream_mode == StreamMode.PLANNER_VR_3PT:
-                sample = self.reader.get_latest()
-                if sample is not None:
-                    print("[PlannerLoop] Sending VR 3-point pose as target")
-                    vr_3pt_pose = self.three_point.process_smpl_pose(sample["body_poses_np"])
-                    vr_3pt_position = (vr_3pt_pose[:, :3].flatten()).tolist()
-                    vr_3pt_orientation = vr_3pt_pose[:, 3:].flatten().tolist()
-
-                # Compute hand joints from trigger/grip inputs so operator can
-                # control hand open/close while in VR 3PT mode
-                (
-                    left_menu_button,
-                    left_trigger,
-                    right_trigger,
-                    left_grip,
-                    right_grip,
-                ) = get_controller_inputs()
-                lh_joints, rh_joints = compute_hand_joints_from_inputs(
-                    self.left_hand_ik_solver,
-                    self.right_hand_ik_solver,
-                    left_trigger,
-                    left_grip,
-                    right_trigger,
-                    right_grip,
-                )
-                left_hand_position = lh_joints.reshape(-1).astype(np.float32).tolist()
-                right_hand_position = rh_joints.reshape(-1).astype(np.float32).tolist()
-
             msg = build_planner_message(
                 mode_to_send.value,
                 movement,
                 facing,
                 speed=speed,
                 height=-1.0,
-                upper_body_position=upper_body_position,
-                left_hand_position=left_hand_position,
-                right_hand_position=right_hand_position,
-                vr_3pt_position=vr_3pt_position,
-                vr_3pt_orientation=vr_3pt_orientation,
-                vr_3pt_compliance=vr_3pt_compliance,
             )
             self.socket.send(msg)
         except Exception as e:
@@ -2277,12 +1774,6 @@ def run_pico_manager(
     use_cuda: bool = False,
     record_dir: str = "",
     record_format: str = "npz",
-    zmq_feedback_host: str = "localhost",
-    zmq_feedback_port: int = 5557,
-    enable_vis_vr3pt: bool = False,
-    with_g1_robot: bool = True,
-    enable_waist_tracking: bool = False,
-    enable_smpl_vis: bool = False,
     raw_record_path: str = "",
     raw_record_max_frames: int = RAW_PICO_RECORD_DEFAULT_MAX_FRAMES,
     stop_event: threading.Event | None = None,
@@ -2327,13 +1818,7 @@ def run_pico_manager(
     reader = PicoReader(max_queue_size=buffer_size, raw_recorder=raw_recorder)
     reader.start()
 
-    three_point = ThreePointPose(
-        enable_vis_vr3pt=enable_vis_vr3pt,
-        with_g1_robot=with_g1_robot,
-        enable_waist_tracking=enable_waist_tracking,
-        enable_smpl_vis=enable_smpl_vis,
-        log_prefix="PoseLoop",
-    )
+    three_point = ThreePointPose(log_prefix="PoseLoop")
 
     pose_streamer = PoseStreamer(
         socket=socket,
@@ -2348,53 +1833,28 @@ def run_pico_manager(
     )
     planner_streamer = PlannerStreamer(
         socket=socket,
-        reader=reader,
-        three_point=three_point,
         poll_hz=20,
-        zmq_feedback_host=zmq_feedback_host,
-        zmq_feedback_port=zmq_feedback_port,
     )
 
-    # State machine diagram:
-    #
-    #   Chain 1 (by_pressed enters/exits, left_axis_click toggles sub-mode):
-    #     POSE <--(by)--> PLANNER_FROZEN_UPPER_BODY <--(left_axis_click)--> PLANNER_VR_3PT
-    #                                                                         |
-    #                                                                    (by)--> POSE
-    #
-    #   Chain 2 (ax_pressed enters/exits, left_axis_click toggles sub-mode):
-    #     POSE <--(ax)--> PLANNER <--(left_axis_click)--> PLANNER_VR_3PT
-    #                                                        |
-    #                                                   (ax)--> POSE
-    #
-    #   Emergency stop from any mode: A+B+X+Y (start_combo) --> OFF
-    #   POSE_PAUSE: left_menu_button held --> POSE_PAUSE, released --> POSE
-    #
+    # Minimal commercial profile state machine:
+    #   OFF --(A+B+X+Y)--> PLANNER <--(A+X)--> POSE
+    #   POSE --(left menu held)--> POSE_PAUSE --(release)--> POSE
+    # Frozen-upper-body/three-point-feedback side paths are deliberately absent.
     print("Manager controls: A+X=toggle mode, A+B+X+Y=start/stop policy")
     current_mode = StreamMode.OFF
-    # Track which mode VR_3PT was entered from, so left_axis_click returns to it.
-    # Will be either PLANNER or PLANNER_FROZEN_UPPER_BODY.
-    vr3pt_parent_mode = StreamMode.PLANNER
     prev_toggle_dc = False
     prev_toggle_da = False
     try:
         prev_ax_pressed = False
-        prev_by_pressed = False
         prev_start_combo = False
-        prev_left_axis_click = False
         while not stop_event.is_set():
             # Poll Pico controller for buttons/axes
             a_pressed, b_pressed, x_pressed, y_pressed = get_abxy_buttons()
 
             left_menu_button, _, _, left_grip_mgr, _ = get_controller_inputs()
 
-            left_axis_click, _ = get_axis_clicks()
-
             # Rising edge: A+X pressed together -> toggle POSE/PLANNER mode
             ax_pressed = (a_pressed) and (x_pressed)
-
-            # Rising edge: B+Y pressed together -> toggle POSE/PLANNER_FROZEN_UPPER_BODY mode
-            by_pressed = (b_pressed) and (y_pressed)
 
             # Rising edge: A+B+X+Y pressed together -> toggle policy start/stop (planner=True)
             start_combo = (a_pressed) and (b_pressed) and (x_pressed) and (y_pressed)
@@ -2412,32 +1872,18 @@ def run_pico_manager(
                         print("[Manager] WARNING: No SMPL data available for calibration")
 
             elif current_mode == StreamMode.PLANNER:
-                # Chain 2: POSE <--(ax)--> PLANNER <--(left_axis_click)--> VR_3PT
                 if start_combo and not prev_start_combo:
                     new_mode = StreamMode.OFF
                 elif ax_pressed and not prev_ax_pressed:
                     new_mode = StreamMode.POSE
-                elif left_axis_click and not prev_left_axis_click:
-                    new_mode = StreamMode.PLANNER_VR_3PT
 
             elif current_mode == StreamMode.POSE:
                 if start_combo and not prev_start_combo:
                     new_mode = StreamMode.OFF
                 elif ax_pressed and not prev_ax_pressed:
-                    new_mode = StreamMode.PLANNER  # Enter chain 2
-                elif by_pressed and not prev_by_pressed:
-                    new_mode = StreamMode.PLANNER_FROZEN_UPPER_BODY  # Enter chain 1
+                    new_mode = StreamMode.PLANNER
                 elif left_menu_button:
                     new_mode = StreamMode.POSE_PAUSE
-
-            elif current_mode == StreamMode.PLANNER_FROZEN_UPPER_BODY:
-                # Chain 1: POSE <--(by)--> FROZEN <--(left_axis_click)--> VR_3PT
-                if start_combo and not prev_start_combo:
-                    new_mode = StreamMode.OFF
-                elif by_pressed and not prev_by_pressed:
-                    new_mode = StreamMode.POSE
-                elif left_axis_click and not prev_left_axis_click:
-                    new_mode = StreamMode.PLANNER_VR_3PT
 
             elif current_mode == StreamMode.POSE_PAUSE:
                 if start_combo and not prev_start_combo:
@@ -2445,57 +1891,20 @@ def run_pico_manager(
                 elif not left_menu_button:
                     new_mode = StreamMode.POSE
 
-            elif current_mode == StreamMode.PLANNER_VR_3PT:
-                # VR_3PT is reachable from both chains:
-                #   left_axis_click → return to parent (PLANNER or FROZEN)
-                #   ax_pressed      → POSE (chain 2 exit)
-                #   by_pressed      → POSE (chain 1 exit)
-                if start_combo and not prev_start_combo:
-                    new_mode = StreamMode.OFF
-                elif left_axis_click and not prev_left_axis_click:
-                    new_mode = vr3pt_parent_mode  # Return to parent mode
-                elif ax_pressed and not prev_ax_pressed:
-                    new_mode = StreamMode.POSE
-                elif by_pressed and not prev_by_pressed:
-                    new_mode = StreamMode.POSE
-
             # Handle mode transitions before running loop
             if new_mode != current_mode:
                 if current_mode == StreamMode.POSE:
                     pose_streamer.on_mode_exit()
 
-                # Track parent when entering VR_3PT
-                if new_mode == StreamMode.PLANNER_VR_3PT:
-                    vr3pt_parent_mode = current_mode
-                    print(f"[Manager] VR_3PT parent: {vr3pt_parent_mode.name}")
-
                 if new_mode == StreamMode.POSE:
                     pose_streamer.reset_yaw()
-                elif new_mode == StreamMode.PLANNER and current_mode != StreamMode.PLANNER_VR_3PT:
-                    # Only reset yaw when freshly entering PLANNER from POSE,
-                    # not when returning from VR_3PT sub-mode
+                elif new_mode == StreamMode.PLANNER:
                     planner_streamer.reset_yaw()
-                elif new_mode == StreamMode.PLANNER_FROZEN_UPPER_BODY:
-                    if current_mode != StreamMode.PLANNER_VR_3PT:
-                        # Freshly entering from POSE: reset yaw and grab initial targets
-                        planner_streamer.reset_yaw()
-                    # Always re-grab the latest robot state as frozen targets,
-                    # whether entering from POSE or returning from VR_3PT
-                    # (the old targets are stale after VR_3PT moved the arms)
-                    planner_streamer.save_upper_body_position_target()
-                elif new_mode == StreamMode.PLANNER_VR_3PT:
-                    # Recalibrate VR tracking against the robot's actual current pose
-                    # (read via g1_debug feedback + FK) to prevent sudden jumps
-                    planner_streamer.recalibrate_for_vr3pt()
 
             # Run one iteration of the new mode
             if new_mode == StreamMode.POSE:
                 pose_streamer.run_once()
-            elif (
-                new_mode == StreamMode.PLANNER
-                or new_mode == StreamMode.PLANNER_FROZEN_UPPER_BODY
-                or new_mode == StreamMode.PLANNER_VR_3PT
-            ):
+            elif new_mode == StreamMode.PLANNER:
                 planner_streamer.run_once(new_mode)
 
             # Make sure to send command messages after loop iteration to ensure data arrives before mode switch
@@ -2503,11 +1912,7 @@ def run_pico_manager(
                 if new_mode == StreamMode.OFF:
                     socket.send(build_command_message(start=False, stop=True, planner=True))
                     exit()
-                elif (
-                    new_mode == StreamMode.PLANNER
-                    or new_mode == StreamMode.PLANNER_FROZEN_UPPER_BODY
-                    or new_mode == StreamMode.PLANNER_VR_3PT
-                ):
+                elif new_mode == StreamMode.PLANNER:
                     socket.send(build_command_message(start=True, stop=False, planner=True))
                 elif new_mode == StreamMode.POSE:
                     socket.send(build_command_message(start=True, stop=False, planner=False))
@@ -2534,9 +1939,7 @@ def run_pico_manager(
             )
 
             prev_ax_pressed = ax_pressed
-            prev_by_pressed = by_pressed
             prev_start_combo = start_combo
-            prev_left_axis_click = left_axis_click
 
     except KeyboardInterrupt:
         stop_event.set()
@@ -2608,83 +2011,7 @@ if __name__ == "__main__":
         action="store_true",
         help="Run manager with planner and pose threads (interactive)",
     )
-    parser.add_argument(
-        "--zmq_feedback_host",
-        type=str,
-        default="localhost",
-        help="ZMQ feedback host (default: localhost)",
-    )
-    parser.add_argument(
-        "--zmq_feedback_port",
-        type=int,
-        default=5557,
-        help="ZMQ feedback port (default: 5557)",
-    )
-    parser.add_argument(
-        "--vr3pt_test",
-        action="store_true",
-        help="Run VR 3-point pose visualizer test (reference frames only)",
-    )
-    parser.add_argument(
-        "--vr3pt_live",
-        action="store_true",
-        help="Capture one frame of VR 3-point pose and visualize with reference frames",
-    )
-    parser.add_argument(
-        "--vr3pt_realtime",
-        action="store_true",
-        help="Run standalone real-time VR 3-point pose visualizer",
-    )
-    parser.add_argument(
-        "--vis_vr3pt",
-        action="store_true",
-        help="Enable inline VR 3-point pose visualization in pose streaming mode",
-    )
-    parser.add_argument(
-        "--vr3pt_hz",
-        type=int,
-        default=10,
-        help="Update rate for real-time VR visualization in Hz (default: 10)",
-    )
-    parser.add_argument(
-        "--no_g1",
-        action="store_true",
-        help="Disable G1 robot visualization in VR 3pt pose view (G1 is shown by default)",
-    )
-    parser.add_argument(
-        "--waist_tracking",
-        action="store_true",
-        help="Enable G1 robot waist to follow VR head orientation (disabled by default for performance)",
-    )
-    parser.add_argument(
-        "--vis_smpl",
-        action="store_true",
-        help="Enable SMPL body joint visualization (24 joint spheres) in the VR3pt viewer",
-    )
     args = parser.parse_args()
-
-    # Standalone VR3Pt test modes (exit after finishing)
-    if args.vr3pt_test:
-        print("Running VR 3-point pose visualizer test...")
-        run_vr3pt_visualizer_test()
-        print("VR 3-point pose visualizer test completed")
-        exit(0)
-
-    if args.vr3pt_live:
-        print("Running VR 3-point pose live capture...")
-        run_vr3pt_live_visualizer()
-        print("VR 3-point pose live visualizer completed")
-        exit(0)
-
-    if args.vr3pt_realtime:
-        print("Running VR 3-point pose real-time visualizer...")
-        run_vr3pt_realtime_visualizer(update_hz=args.vr3pt_hz)
-        print("VR 3-point pose real-time visualizer completed")
-        exit(0)
-
-    # Main execution modes
-    # G1 robot visualization is enabled by default when vis_vr3pt is used
-    with_g1_robot = not args.no_g1
     stop_event = threading.Event()
     previous_signal_handlers = _install_stop_signal_handlers(stop_event, "Manager")
     try:
@@ -2697,18 +2024,12 @@ if __name__ == "__main__":
                 use_cuda=args.cuda,
                 record_dir=args.record_dir,
                 record_format=args.record_format,
-                zmq_feedback_host=args.zmq_feedback_host,
-                zmq_feedback_port=args.zmq_feedback_port,
-                enable_vis_vr3pt=args.vis_vr3pt,
-                with_g1_robot=with_g1_robot,
-                enable_waist_tracking=args.waist_tracking,
-                enable_smpl_vis=args.vis_smpl,
                 raw_record_path=args.raw_record_path,
                 raw_record_max_frames=args.raw_record_max_frames,
                 stop_event=stop_event,
             )
         else:
-            # Run legacy single-thread pose streaming
+            # Run the single-thread pose streaming entry point.
             run_pico(
                 buffer_size=args.buffer_size,
                 port=args.port,
@@ -2717,10 +2038,6 @@ if __name__ == "__main__":
                 use_cuda=args.cuda,
                 record_dir=args.record_dir,
                 record_format=args.record_format,
-                enable_vis_vr3pt=args.vis_vr3pt,
-                with_g1_robot=with_g1_robot,
-                enable_waist_tracking=args.waist_tracking,
-                enable_smpl_vis=args.vis_smpl,
                 raw_record_path=args.raw_record_path,
                 raw_record_max_frames=args.raw_record_max_frames,
                 stop_event=stop_event,

@@ -80,7 +80,7 @@ DEFAULT_MODEL_ONNX = _find_package_data_file(
     "sonic_model/elf3_step28800_smpl/model_step_028800_smpl.onnx"
 )
 DEFAULT_STREAM_REFERENCE = _find_package_data_file(
-    "sonic_reference/elf3_step28800_idle_left_001_A019/stream_reference.npz"
+    "sonic_reference/elf3_pico_stand_clean_001/stream_reference.npz"
 )
 DEFAULT_STAND_REFERENCE = _find_package_data_file(
     "sonic_reference/elf3_pico_stand_clean_001/stream_reference.npz"

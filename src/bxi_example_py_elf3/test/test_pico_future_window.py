@@ -216,7 +216,9 @@ def test_parser_rejects_incomplete_or_nonconsecutive_windows(
         "smpl_joints": np.zeros((frame_count, 24, 3), dtype=np.float32),
         "body_quat_w": np.zeros((frame_count, 4), dtype=np.float32),
         "joint_pos": np.zeros((frame_count, 29), dtype=np.float32),
+        "wrist": np.zeros((frame_count, 6), dtype=np.float32),
+        "wrist_layout_version": np.array([1], dtype=np.int32),
     }
 
     with pytest.raises(ValueError, match=expected_error):
-        _parse_incoming_chunk(fields, "elf3_native")
+        _parse_incoming_chunk(fields)

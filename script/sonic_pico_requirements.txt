@@ -1,0 +1,10 @@
+numpy==1.26.4
+scipy==1.15.3
+pyzmq==27.1.0
+msgpack==1.1.2
+torch==2.6.0+cpu
+pin==2.7.0
+onnx==1.22.0
+onnxruntime==1.23.2
+typing-extensions==4.15.0
+sympy==1.13.1

@@ -1,15 +1,18 @@
 # Release Sanitizer
 
-`sanitize_release.py` 用来从内部开发分支生成公开发布树。它不会修改当前仓库源码，而是复制一份目录到 `--out`，再按各 example 的 `release_protection.yaml` 删除受保护状态、模型、动作数据和只用于这些状态的遥控器入口。
+`sanitize_release.py` 用来从内部开发分支生成公开发布树。它不会修改当前仓库源码，而是先把 `--source-ref` 解析为不可变 Git commit，再只从该 commit 的 Git blob 导出文件到 `--out`，随后按各 example 的 `release_protection.yaml` 删除受保护状态、模型、动作数据和只用于这些状态的遥控器入口；当前工作树中已修改或未跟踪的文件不会进入发布树。
 
 典型用法：
 
 ```bash
 python3 tools/sanitize_release.py \
+  --source-ref HEAD \
   --manifest src/bxi_example_py_elf3/config/release_protection.yaml \
   --out dist/public_release \
   --self-check
 ```
+
+`--source-ref` 默认为 `HEAD`，也可以指定 tag、分支或 commit SHA；脚本在导出前会把它固定解析为 commit SHA。发布或部署流水线应记录输出中的 `source_commit`，以便精确复现输入版本。Git 符号链接和 submodule 会被拒绝，普通文件的可执行位会按 commit 恢复。
 
 不传 `--manifest` 时，默认读取：
 
@@ -191,8 +194,16 @@ paths:
 公开树会固定删除这些 dev-only 文件：
 
 ```text
+docs/
+src/bxi_example_py_elf3/test/
+src/bxi_example_py_elf3/xbox_key_map.jpg
+src/remote_controller/{ps4,xbox}_key_map.png
+src/bxi_example_py_elf3/data/mujoco_simulation/
+src/bxi_example_py_elf3/data/sonic_robot_model/elf3_dof29_hand/urdf/meshes/
 release_protection.yaml
 tools/sanitize_release.py
+tools/test_sanitize_release.py
+tools/README.md
 .github/workflows/sync_public_main.yml
 ```
 

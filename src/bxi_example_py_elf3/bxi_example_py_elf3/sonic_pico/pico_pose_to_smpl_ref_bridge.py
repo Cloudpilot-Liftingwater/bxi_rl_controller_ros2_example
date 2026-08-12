@@ -42,6 +42,10 @@ from bxi_example_py_elf3.sonic_pico.streamed_smpl_ref import (
     _classify_frame_progress,
     _new_stream_epoch,
 )
+from bxi_example_py_elf3.sonic_pico.elf3_wrist_mapping import (
+    ELF3_WRIST_LAYOUT_VERSION,
+    ELF3_NATIVE_WRIST_INDICES,
+)
 from bxi_example_py_elf3.sonic_pico.zmq_messages import pack_pose_message
 
 
@@ -54,13 +58,6 @@ DTYPE_MAP = {
     "u8": np.dtype("u1"),
     "bool": np.dtype("?"),
 }
-
-# Current official PICO manager fills the 29-d joint_pos wrist slots using the
-# original SONIC/G1 index convention.  We export them as ELF3 native wrist order:
-#   l_wrist_x, l_wrist_y, l_wrist_z, r_wrist_x, r_wrist_y, r_wrist_z.
-PICO_G1_LEGACY_WRIST_IDX = [23, 25, 27, 24, 26, 28]
-ELF3_NATIVE_WRIST_IDX = [19, 20, 21, 26, 27, 28]
-
 
 PICO_BUTTON_FIELDS = (
     "left_trigger",
@@ -196,23 +193,17 @@ def _as_frame_matrix(arr: np.ndarray, width: int, name: str) -> np.ndarray:
     return np.ascontiguousarray(arr, dtype=np.float32)
 
 
-def _extract_wrist_frames(joint_pos: np.ndarray, source: str) -> np.ndarray:
+def _extract_wrist_frames(joint_pos: np.ndarray) -> np.ndarray:
     jp = np.asarray(joint_pos, dtype=np.float32)
     if jp.ndim == 1:
         jp = jp.reshape(1, -1)
     if jp.shape[1] < 29:
         raise ValueError(f"joint_pos has shape {jp.shape}; expected at least 29 columns")
 
-    if source == "pico_g1_legacy":
-        idx = PICO_G1_LEGACY_WRIST_IDX
-    elif source == "elf3_native":
-        idx = ELF3_NATIVE_WRIST_IDX
-    else:
-        raise ValueError(f"unknown wrist source: {source}")
-    return np.ascontiguousarray(jp[:, idx], dtype=np.float32)
+    return np.ascontiguousarray(jp[:, ELF3_NATIVE_WRIST_INDICES], dtype=np.float32)
 
 
-def _parse_incoming_chunk(fields: dict[str, np.ndarray], wrist_source: str) -> IncomingChunk:
+def _parse_incoming_chunk(fields: dict[str, np.ndarray]) -> IncomingChunk:
     missing = [
         k
         for k in ("frame_index", "smpl_joints", "body_quat_w", "joint_pos")
@@ -234,7 +225,22 @@ def _parse_incoming_chunk(fields: dict[str, np.ndarray], wrist_source: str) -> I
         raise ValueError(f"smpl_joints has shape {smpl_joints.shape}; expected (N,24,3)")
 
     root_quat = _as_frame_matrix(fields["body_quat_w"], 4, "body_quat_w")
-    wrist = _extract_wrist_frames(fields["joint_pos"], wrist_source)
+    layout_version = np.asarray(
+        fields.get("wrist_layout_version", []), dtype=np.int32
+    ).reshape(-1)
+    if layout_version.size != 1 or int(layout_version[0]) != ELF3_WRIST_LAYOUT_VERSION:
+        raise ValueError(
+            "PICO pose message is not tagged with the ELF3 native wrist layout"
+        )
+
+    explicit_wrist = fields.get("wrist")
+    if explicit_wrist is None:
+        wrist = _extract_wrist_frames(fields["joint_pos"])
+    else:
+        wrist = _as_frame_matrix(explicit_wrist, 6, "wrist")
+        packed_wrist = _extract_wrist_frames(fields["joint_pos"])
+        if not np.array_equal(wrist, packed_wrist):
+            raise ValueError("explicit ELF3 wrist field disagrees with joint_pos transport")
     frame_indices = np.asarray(fields["frame_index"], dtype=np.int64).reshape(-1)
 
     n = term1.shape[0]
@@ -305,12 +311,6 @@ def main() -> int:
     parser.add_argument("--out-host", default="127.0.0.1")
     parser.add_argument("--out-port", type=int, default=5557)
     parser.add_argument("--out-topic", default="smpl_ref")
-    parser.add_argument(
-        "--wrist-source",
-        choices=("pico_g1_legacy", "elf3_native"),
-        default="pico_g1_legacy",
-        help="source layout of the incoming pose.joint_pos wrist fields",
-    )
     parser.add_argument("--log-every", type=float, default=2.0)
     parser.add_argument(
         "--disable-ros-pico-topics",
@@ -349,7 +349,7 @@ def main() -> int:
     )
     print(
         f"[pico->smpl_ref] PUB tcp://{args.out_host}:{args.out_port} "
-        f"topic='{args.out_topic}' wrist_source={args.wrist_source}"
+        f"topic='{args.out_topic}' wrist_layout=elf3_native_v1"
     )
     print(
         "[pico->smpl_ref] one-way source chunks enabled "
@@ -389,9 +389,7 @@ def main() -> int:
                         if fields is None:
                             raise ValueError("unexpected PICO topic")
                         button_pub.publish(fields)
-                        chunk = _parse_incoming_chunk(
-                            fields, args.wrist_source
-                        )
+                        chunk = _parse_incoming_chunk(fields)
                     except Exception as exc:
                         skipped += 1
                         print(

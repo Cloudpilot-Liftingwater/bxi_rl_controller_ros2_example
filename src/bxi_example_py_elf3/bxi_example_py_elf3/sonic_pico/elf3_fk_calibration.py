@@ -1,4 +1,9 @@
-"""ELF3 FK reference poses for SONIC PICO 3-point calibration."""
+"""Mesh-free ELF3 FK poses for SONIC PICO calibration.
+
+The calibration contract is expressed relative to ``waist_z_link``.  Loading
+this module therefore requires only the ELF3 URDF kinematic tree; visual and
+collision geometry are deliberately not built or accessed.
+"""
 
 from __future__ import annotations
 
@@ -52,18 +57,22 @@ ELF3_CONTROLLED_JOINTS: tuple[str, ...] = (
     "r_wrist_z_joint",
 )
 
+ELF3_ANCHOR_FRAME = "waist_z_link"
+
 ELF3_FRAME_MAPPING: dict[str, str] = {
     "left_wrist": "l_wrist_z_link",
     "right_wrist": "r_wrist_z_link",
-    "torso": "torso_link",
-    "anchor": "waist_z_link",
+    # The three-point calibration's torso reference is the selected ELF3
+    # anchor, matching the clean ELF3-native runtime contract.
+    "torso": ELF3_ANCHOR_FRAME,
+    "anchor": ELF3_ANCHOR_FRAME,
 }
 
 ELF3_KEY_FRAME_OFFSETS: dict[str, np.ndarray] = {
-    "left_wrist": np.array([0.203, 0.0, 0.0], dtype=np.float64),
-    "right_wrist": np.array([0.203, 0.0, 0.0], dtype=np.float64),
-    "torso": np.array([0.0, 0.0, 0.35], dtype=np.float64),
-    "anchor": np.array([0.0, 0.0, 0.0], dtype=np.float64),
+    "left_wrist": np.zeros(3, dtype=np.float64),
+    "right_wrist": np.zeros(3, dtype=np.float64),
+    "torso": np.zeros(3, dtype=np.float64),
+    "anchor": np.zeros(3, dtype=np.float64),
 }
 
 
@@ -99,16 +108,35 @@ def resolve_default_elf3_urdf() -> Path:
 @dataclass
 class Elf3FkCalibration:
     urdf_path: Path
-    asset_dir: Path
+    # Retained for source compatibility with the first ELF3 helper.  FK uses
+    # ``pin.buildModelFromUrdf`` and never asks Pinocchio to load geometry.
+    asset_dir: Path | None = None
 
     def __post_init__(self) -> None:
         if pin is None:
             raise ImportError("pinocchio is required for ELF3 FK calibration")
 
+        self.urdf_path = Path(self.urdf_path).resolve()
+        if not self.urdf_path.is_file():
+            raise FileNotFoundError(f"ELF3 URDF not found: {self.urdf_path}")
+
+        # This API builds only the kinematic model.  In particular, do not use
+        # RobotWrapper.BuildFromURDF here: that also builds visual/collision
+        # models and would make FK depend on redistributable mesh assets.
         self.model = pin.buildModelFromUrdf(str(self.urdf_path))
         self.data = self.model.createData()
         self.q0 = pin.neutral(self.model)
         self.joint_to_q_index = self._build_joint_to_q_index()
+
+        missing_frames = sorted(
+            {
+                frame_name
+                for frame_name in ELF3_FRAME_MAPPING.values()
+                if not self.model.existFrame(frame_name)
+            }
+        )
+        if missing_frames:
+            raise RuntimeError(f"ELF3 URDF is missing FK frames: {missing_frames}")
 
     @classmethod
     def from_default_urdf(cls) -> "Elf3FkCalibration":
@@ -157,13 +185,13 @@ class Elf3FkCalibration:
 
         pin.framesForwardKinematics(self.model, self.data, q)
 
+        anchor_id = self.model.getFrameId(ELF3_ANCHOR_FRAME)
+        world_anchor = self.data.oMf[anchor_id]
+
         result: dict[str, dict[str, np.ndarray]] = {}
         for key, frame_name in ELF3_FRAME_MAPPING.items():
             frame_id = self.model.getFrameId(frame_name)
-            if frame_id < 0 or frame_id >= len(self.model.frames):
-                raise RuntimeError(f"ELF3 URDF is missing frame {frame_name}")
-
-            placement = self.data.oMf[frame_id]
+            placement = world_anchor.inverse() * self.data.oMf[frame_id]
             rotation = placement.rotation
             position = placement.translation.copy()
 

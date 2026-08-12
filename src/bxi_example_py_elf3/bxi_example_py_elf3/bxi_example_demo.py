@@ -326,7 +326,7 @@ class BxiExample(HotReloadMixin, Node):
         )
         sonic_stream_reference_path = model_file_or_env(
             "BXI_SONIC_STREAM_REFERENCE_NPZ",
-            "sonic_reference/elf3_step28800_idle_left_001_A019/stream_reference.npz",
+            "sonic_reference/elf3_pico_stand_clean_001/stream_reference.npz",
         )
         self.sonic_teleop: SonicTeleopPolicy = SonicTeleopPolicy(
             model_onnx_path=sonic_model_path,

@@ -2,6 +2,7 @@
 import argparse
 import re
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,9 +14,17 @@ import yaml
 DEFAULT_MANIFESTS = (Path("src/bxi_example_py_elf3/config/release_protection.yaml"),)
 DEFAULT_REMOTE_CONFIG = Path("src/remote_controller/config/xbox_default.yaml")
 PUBLIC_DEV_ONLY_PATHS = {
+    Path("docs"),
     Path("tools/sanitize_release.py"),
+    Path("tools/test_sanitize_release.py"),
     Path("tools/README.md"),
     Path(".github/workflows/sync_public_main.yml"),
+    Path("src/bxi_example_py_elf3/test"),
+    Path("src/bxi_example_py_elf3/xbox_key_map.jpg"),
+    Path("src/remote_controller/ps4_key_map.png"),
+    Path("src/remote_controller/xbox_key_map.png"),
+    Path("src/bxi_example_py_elf3/data/mujoco_simulation"),
+    Path("src/bxi_example_py_elf3/data/sonic_robot_model/elf3_dof29_hand/urdf/meshes"),
 }
 ROOT_RELATIVE_PREFIXES = {"src", "tools", ".github"}
 
@@ -162,29 +171,121 @@ def load_protection_spec(source_root: Path, manifest_arg: Path) -> ProtectionSpe
     )
 
 
-def copy_release_tree(source_root: Path, output_root: Path) -> None:
+def resolve_source_commit(source_root: Path, source_ref: str) -> str:
+    """Resolve *source_ref* to one immutable Git commit object."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(source_root), "rev-parse", "--verify", f"{source_ref}^{{commit}}"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        detail = getattr(exc, "stderr", "") or str(exc)
+        raise ValueError(f"cannot resolve Git source ref '{source_ref}': {detail.strip()}") from exc
+    return result.stdout.strip()
+
+
+def repository_relative_argument(source_root: Path, path: Path, field_name: str) -> Path:
+    """Map a CLI path to a safe repository-relative path.
+
+    Absolute paths are accepted only when they point below the source repository.
+    This keeps every release input pinned to the exported commit rather than
+    accidentally reading or rewriting the current working tree.
+    """
+    source_root = source_root.resolve()
+    candidate = path.resolve() if path.is_absolute() else (source_root / path).resolve()
+    try:
+        return candidate.relative_to(source_root)
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be inside the source repository: {path}") from exc
+
+
+def copy_release_tree(source_root: Path, output_root: Path, source_commit: str) -> None:
+    """Export exactly the files recorded by *source_commit* into *output_root*.
+
+    Reading every blob through Git deliberately excludes modified and untracked
+    working-tree content. Refuse links so no archived path can escape the release
+    directory during later sanitization.
+    """
     source_root = source_root.resolve()
     output_root = output_root.resolve()
     if output_root == source_root:
         raise ValueError("output directory must not be the repository root")
+    try:
+        source_root.relative_to(output_root)
+    except ValueError:
+        pass
+    else:
+        raise ValueError("output directory must not contain the source repository")
     if output_root.exists():
         shutil.rmtree(output_root)
+    output_root.mkdir(parents=True)
 
-    def ignore(_dir: str, names: List[str]) -> Set[str]:
-        ignored = {
-            ".git",
-            "build",
-            "install",
-            "log",
-            "dist",
-            "update",
-            ".update",
-            "__pycache__",
-            ".pytest_cache",
-        }
-        return {name for name in names if name in ignored}
+    try:
+        listing = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(source_root),
+                "-c",
+                "core.quotePath=false",
+                "ls-tree",
+                "-rz",
+                "--full-tree",
+                source_commit,
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        detail = getattr(exc, "stderr", b"")
+        if isinstance(detail, bytes):
+            detail = detail.decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"failed to list Git commit {source_commit}: {(detail or str(exc)).strip()}"
+        ) from exc
 
-    shutil.copytree(source_root, output_root, ignore=ignore)
+    for entry in listing.split(b"\0"):
+        if not entry:
+            continue
+        metadata, raw_path = entry.split(b"\t", 1)
+        mode, object_type, object_id = metadata.decode("ascii").split()
+        if object_type != "blob" or mode not in {"100644", "100755"}:
+            path_text = raw_path.decode("utf-8", errors="replace")
+            raise RuntimeError(
+                f"Git source commit contains unsupported entry: mode={mode} "
+                f"type={object_type} path={path_text}"
+            )
+
+        relative_path = Path(raw_path.decode("utf-8"))
+        destination = (output_root / relative_path).resolve()
+        try:
+            destination.relative_to(output_root)
+        except ValueError as exc:
+            raise RuntimeError(f"unsafe Git path: {relative_path}") from exc
+
+        try:
+            content = subprocess.run(
+                ["git", "-C", str(source_root), "cat-file", "blob", object_id],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            ).stdout
+        except (OSError, subprocess.CalledProcessError) as exc:
+            detail = getattr(exc, "stderr", b"")
+            if isinstance(detail, bytes):
+                detail = detail.decode("utf-8", errors="replace")
+            raise RuntimeError(
+                f"failed to read Git blob {object_id} for {relative_path}: "
+                f"{(detail or str(exc)).strip()}"
+            ) from exc
+
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(content)
+        destination.chmod(0o755 if mode == "100755" else 0o644)
 
 
 def transition_target(rule: Any) -> Optional[str]:
@@ -533,10 +634,16 @@ def sanitize_release(
     manifest_paths: List[Path],
     remote_config: Path,
     self_check: bool,
+    source_ref: str = "HEAD",
 ) -> None:
-    specs = [load_protection_spec(source_root, path) for path in manifest_paths]
-
-    copy_release_tree(source_root, output_root)
+    manifest_paths = [
+        repository_relative_argument(source_root, path, "manifest")
+        for path in manifest_paths
+    ]
+    remote_config = repository_relative_argument(source_root, remote_config, "remote config")
+    source_commit = resolve_source_commit(source_root, source_ref)
+    copy_release_tree(source_root, output_root, source_commit)
+    specs = [load_protection_spec(output_root, path) for path in manifest_paths]
 
     protected_outputs: Set[str] = set()
     tokens_to_check: Set[str] = set()
@@ -586,6 +693,11 @@ def parse_args() -> argparse.Namespace:
         help="remote controller config to sanitize",
     )
     parser.add_argument("--out", default="dist/public_release", help="output directory")
+    parser.add_argument(
+        "--source-ref",
+        default="HEAD",
+        help="Git commit/ref to export (default: HEAD); working-tree changes are never included",
+    )
     parser.add_argument("--self-check", action="store_true", help="fail if removed protected strings remain")
     return parser.parse_args()
 
@@ -595,8 +707,16 @@ def main() -> None:
     source_root = Path.cwd()
     manifest_paths = [Path(item) for item in args.manifest] if args.manifest else list(DEFAULT_MANIFESTS)
     output_root = Path(args.out)
-    sanitize_release(source_root, output_root, manifest_paths, Path(args.remote_config), args.self_check)
-    print(f"public release tree generated at: {output_root}")
+    source_commit = resolve_source_commit(source_root, args.source_ref)
+    sanitize_release(
+        source_root,
+        output_root,
+        manifest_paths,
+        Path(args.remote_config),
+        args.self_check,
+        source_ref=source_commit,
+    )
+    print(f"public release tree generated at: {output_root} source_commit={source_commit}")
 
 
 if __name__ == "__main__":

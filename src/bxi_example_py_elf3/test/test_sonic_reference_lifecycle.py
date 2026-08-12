@@ -2,12 +2,15 @@ import json
 import queue
 import threading
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from bxi_example_py_elf3.inference.sonic import (
+    DEFAULT_STAND_REFERENCE,
+    DEFAULT_STREAM_REFERENCE,
     MODEL_INPUT_DIM,
     NUM_JOINTS,
     WINDOW,
@@ -34,6 +37,19 @@ class _FakeSession:
         if self.fail:
             raise RuntimeError("synthetic inference failure")
         return [np.ones((1, NUM_JOINTS), dtype=np.float32)]
+
+
+def test_offline_and_standby_defaults_use_the_self_collected_stand_reference():
+    expected_parts = (
+        "sonic_reference",
+        "elf3_pico_stand_clean_001",
+        "stream_reference.npz",
+    )
+
+    for reference in (DEFAULT_STREAM_REFERENCE, DEFAULT_STAND_REFERENCE):
+        path = Path(reference)
+        assert path.parts[-3:] == expected_parts
+        assert path.is_file()
 
 
 def _make_policy(monkeypatch, *, require_live_reference=True):

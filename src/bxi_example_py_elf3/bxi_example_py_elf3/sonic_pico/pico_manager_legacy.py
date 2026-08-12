@@ -1,9 +1,4 @@
-"""Temporary entry point for the legacy PICO manager during ELF3 FK migration.
-
-The final runtime should move the PICO manager itself into this package and use
-ELF3 FK calibration.  This wrapper keeps the verified PICO startup path working
-while the new ELF3 FK path is A/B tested.
-"""
+"""Entry point for the ELF3-native PICO manager shipped with this runtime."""
 
 from __future__ import annotations
 
@@ -27,17 +22,17 @@ def _resolve_runtime_root() -> Path:
             return parent
 
     raise FileNotFoundError(
-        "Cannot locate legacy gear_sonic/scripts/pico_manager_thread_server.py. "
+        "Cannot locate gear_sonic/scripts/pico_manager_thread_server.py. "
         "Set BXI_RUNTIME_ROOT to the BXI runtime root."
     )
 
 
 def main() -> int:
     runtime_root = _resolve_runtime_root()
-    legacy_script = runtime_root / "gear_sonic" / "scripts" / "pico_manager_thread_server.py"
+    manager_script = runtime_root / "gear_sonic" / "scripts" / "pico_manager_thread_server.py"
     sys.path.insert(0, str(runtime_root))
-    sys.argv[0] = str(legacy_script)
-    runpy.run_path(str(legacy_script), run_name="__main__")
+    sys.argv[0] = str(manager_script)
+    runpy.run_path(str(manager_script), run_name="__main__")
     return 0
 
 
