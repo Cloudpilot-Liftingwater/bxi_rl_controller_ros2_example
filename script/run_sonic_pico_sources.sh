@@ -18,9 +18,6 @@ PICO_PORT="${PICO_PORT:-5556}"
 SMPL_REF_ZMQ_HOST="${SMPL_REF_ZMQ_HOST:-127.0.0.1}"
 SMPL_REF_ZMQ_PORT="${SMPL_REF_ZMQ_PORT:-5557}"
 SMPL_REF_ZMQ_TOPIC="${SMPL_REF_ZMQ_TOPIC:-smpl_ref}"
-SMPL_REF_CONTROL_HOST="${SMPL_REF_CONTROL_HOST:-127.0.0.1}"
-SMPL_REF_CONTROL_PORT="${SMPL_REF_CONTROL_PORT:-5558}"
-SMPL_REF_CONTROL_TOPIC="${SMPL_REF_CONTROL_TOPIC:-smpl_ref_control}"
 WRIST_SOURCE="${WRIST_SOURCE:-pico_g1_legacy}"
 BRIDGE_LOG_EVERY="${BRIDGE_LOG_EVERY:-1}"
 PICO_ENABLE_ROS_BUTTONS="${PICO_ENABLE_ROS_BUTTONS:-0}"
@@ -157,9 +154,6 @@ bridge_args=(
   --out-host "${SMPL_REF_ZMQ_HOST}"
   --out-port "${SMPL_REF_ZMQ_PORT}"
   --out-topic "${SMPL_REF_ZMQ_TOPIC}"
-  --control-host "${SMPL_REF_CONTROL_HOST}"
-  --control-port "${SMPL_REF_CONTROL_PORT}"
-  --control-topic "${SMPL_REF_CONTROL_TOPIC}"
   --wrist-source "${WRIST_SOURCE}"
   --log-every "${BRIDGE_LOG_EVERY}"
 )
@@ -167,7 +161,7 @@ if [[ "${PICO_ENABLE_ROS_BUTTONS}" != "1" ]]; then
   bridge_args+=(--disable-ros-pico-topics)
 fi
 
-echo "[sonic-pico-sources] starting ACK-gated PICO pose -> ELF3 smpl_ref bridge"
+echo "[sonic-pico-sources] starting one-way PICO pose -> ELF3 source-chunk adapter"
 setsid "${PYTHON_BIN}" "${bridge_args[@]}" &
 bridge_pid=$!
 bridge_pgid="${bridge_pid}"

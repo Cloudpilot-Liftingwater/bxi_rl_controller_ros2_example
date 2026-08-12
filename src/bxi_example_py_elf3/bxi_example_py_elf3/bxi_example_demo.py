@@ -671,14 +671,19 @@ class BxiExample(HotReloadMixin, Node):
         else:
             cmd_vel = np.asarray(cmd_vel, dtype=np.float32)
         history_len = getattr(model, "obs_history_len", 1)
+        # Streamed policies may need a side-effect-free warmup path.  In
+        # particular, SONIC must not poll or advance the live reference while
+        # these tight-loop calls are not real 50 Hz control ticks.
+        preheat_step = getattr(model, "preheat_step", None)
         for _ in range(history_len*2):
             if type(model) is NormalMotionPolicyMjlab:
                 model.infer_step(q, dq, quat_xyzw, omega, cmd_vel)
             else:
+                inference_step = preheat_step or model.inference_step
                 if with_cmd_vel:
-                    model.inference_step(q, dq, quat_wxyz, omega, cmd_vel)
+                    inference_step(q, dq, quat_wxyz, omega, cmd_vel)
                 else:
-                    model.inference_step(q, dq, quat_wxyz, omega)
+                    inference_step(q, dq, quat_wxyz, omega)
 
 # ----------------------------------- 工具类函数 ---------------------------------- #
 

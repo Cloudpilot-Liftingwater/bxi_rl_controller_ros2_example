@@ -179,11 +179,6 @@ class SonicTeleopState(RobotControlState):
         return self._motor_frame(qpos, ctx.sonic_teleop.kps, ctx.sonic_teleop.kds)
 
     def on_update(self, ctx: BxiExample, dt: float) -> None:
-        if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):
-            print("sonic teleop orientation unsafe, zero_torque!")
-            ctx.request_state("zero_torque", trigger="safety")
-            return
-
         frame = self.get_motor_frame(ctx, dt, False)
         if frame is not None:
             ctx.set_motor_target(*frame)

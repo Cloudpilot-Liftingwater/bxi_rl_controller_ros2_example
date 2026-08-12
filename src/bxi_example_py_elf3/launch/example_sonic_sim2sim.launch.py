@@ -13,11 +13,21 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     share = get_package_share_path("bxi_example_py_elf3")
-    mujoco_model_file = os.path.join(share, "data/mujoco_simulation/elf3.xml")
+    default_mujoco_model_file = os.path.join(
+        share, "data/mujoco_simulation/elf3.xml"
+    )
     state_machine_config = os.path.join(share, "config/elf3_state_machine.yaml")
 
     return LaunchDescription(
         [
+            DeclareLaunchArgument(
+                "mujoco_model_file",
+                default_value=default_mujoco_model_file,
+                description=(
+                    "MuJoCo XML used by this simulation-only launch. This "
+                    "allows no-gripper/gripper A/B without replacing elf3.xml."
+                ),
+            ),
             DeclareLaunchArgument(
                 "startup_release_delay",
                 default_value="1.0",
@@ -44,11 +54,11 @@ def generate_launch_description():
                 executable="simulation",
                 name="simulation_mujoco",
                 output="screen",
-                parameters=[
-                    {"simulation/model_file": mujoco_model_file},
-                ],
+                # The installed simulator treats argv[1] as its XML path.
+                # Passing only a ROS parameter makes argv[1] become
+                # ``--ros-args`` and the model parse fails.
+                arguments=[LaunchConfiguration("mujoco_model_file")],
                 emulate_tty=True,
-                arguments=[("__log_level:=debug")],
             ),
             Node(
                 package="bxi_example_py_elf3",
@@ -68,7 +78,6 @@ def generate_launch_description():
                     },
                 ],
                 emulate_tty=True,
-                arguments=[("__log_level:=debug")],
             ),
         ]
     )

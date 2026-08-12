@@ -4,10 +4,12 @@ import numpy as np
 import pytest
 
 from bxi_example_py_elf3.sonic_pico.pico_pose_to_smpl_ref_bridge import (
+    _parse_incoming_chunk,
+)
+from bxi_example_py_elf3.sonic_pico.streamed_smpl_ref import (
     IncomingChunk,
     StreamedSmplRefMerger,
     _classify_frame_progress,
-    _parse_incoming_chunk,
 )
 
 
@@ -54,13 +56,13 @@ def _publish_tick(
     source_age_ms: float = 0.0,
     source_stale: bool = False,
 ) -> dict[str, np.ndarray] | None:
-    """Model the bridge's official gather/send/advance ordering."""
+    """Model the policy's official gather/infer/advance ordering."""
     ref = merger.build_smpl_ref(
         source_age_ms=source_age_ms,
         source_stale=source_stale,
     )
     if ref is not None:
-        merger.advance_after_publish()
+        merger.advance_after_successful_tick()
     return ref
 
 
@@ -87,8 +89,8 @@ def test_official_tail_guard_builds_then_advances_and_keeps_one_extra_frame():
     merger.merge(_chunk(102))
     ref = merger.build_smpl_ref()
     _assert_complete_window(ref, 100, newest=111, held=False)
-    assert merger.current_frame == 0  # A build/send failure must not consume it.
-    assert merger.advance_after_publish()
+    assert merger.current_frame == 0  # A failed inference must not consume it.
+    assert merger.advance_after_successful_tick()
     assert merger.current_frame == 1
     _assert_complete_window(_publish_tick(merger), 101, newest=111, held=True)
 
@@ -123,7 +125,10 @@ def test_rate_mismatch_keeps_global_playhead_continuous_across_rolling_merges():
             held_windows += 1
         previous_playhead = playhead
 
-    assert held_windows >= 50
+    # 49.5 Hz versus 50 Hz should hold only about 0.5 tick/s, not repeat
+    # roughly half the windows as the removed ACK gate did.
+    assert 55 <= held_windows <= 70
+    assert previous_playhead / 120.0 >= 49.4
     assert int(ref["lead_frames"][0]) >= WINDOW
 
 

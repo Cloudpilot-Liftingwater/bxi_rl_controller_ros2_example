@@ -18,10 +18,8 @@ fi
 if [[ -f "${REPO_ROOT}/install/setup.bash" ]]; then
   source "${REPO_ROOT}/install/setup.bash"
 fi
-# Run the packaged bridge implementation, which owns the official-style
-# continuous playout cursor, protected 10-frame observation tail, and local
-# policy ACK gate.  The legacy gear_sonic_deploy copy is retained only for old
-# standalone tooling and must not be used by the main BXI sim2sim path.
+# Use the source tree for both the bridge adapter and policy package during
+# development.  The bridge forwards source chunks; the policy owns playback.
 export PYTHONPATH="${REPO_ROOT}/src/bxi_example_py_elf3:${REPO_ROOT}:${PYTHONPATH:-}"
 
 if [[ -f .venv_teleop/bin/activate ]]; then
@@ -34,9 +32,6 @@ PICO_PORT="${PICO_PORT:-5556}"
 SMPL_REF_ZMQ_HOST="${SMPL_REF_ZMQ_HOST:-127.0.0.1}"
 SMPL_REF_ZMQ_PORT="${SMPL_REF_ZMQ_PORT:-5557}"
 SMPL_REF_ZMQ_TOPIC="${SMPL_REF_ZMQ_TOPIC:-smpl_ref}"
-SMPL_REF_CONTROL_HOST="${SMPL_REF_CONTROL_HOST:-127.0.0.1}"
-SMPL_REF_CONTROL_PORT="${SMPL_REF_CONTROL_PORT:-5558}"
-SMPL_REF_CONTROL_TOPIC="${SMPL_REF_CONTROL_TOPIC:-smpl_ref_control}"
 WRIST_SOURCE="${WRIST_SOURCE:-pico_g1_legacy}"
 BRIDGE_LOG_EVERY="${BRIDGE_LOG_EVERY:-1}"
 PICO_RAW_RECORD_PATH="${PICO_RAW_RECORD_PATH:-}"
@@ -89,7 +84,7 @@ pico_pid=$!
 
 sleep 1.0
 
-echo "[elf3-pico-sources] starting ACK-gated official-style continuous-cursor PICO pose -> ELF3 smpl_ref bridge"
+echo "[elf3-pico-sources] starting one-way PICO pose -> ELF3 source-chunk adapter"
 python3 -m bxi_example_py_elf3.sonic_pico.pico_pose_to_smpl_ref_bridge \
   --pico-host "${PICO_HOST}" \
   --pico-port "${PICO_PORT}" \
@@ -97,9 +92,6 @@ python3 -m bxi_example_py_elf3.sonic_pico.pico_pose_to_smpl_ref_bridge \
   --out-host "${SMPL_REF_ZMQ_HOST}" \
   --out-port "${SMPL_REF_ZMQ_PORT}" \
   --out-topic "${SMPL_REF_ZMQ_TOPIC}" \
-  --control-host "${SMPL_REF_CONTROL_HOST}" \
-  --control-port "${SMPL_REF_CONTROL_PORT}" \
-  --control-topic "${SMPL_REF_CONTROL_TOPIC}" \
   --wrist-source "${WRIST_SOURCE}" \
   --log-every "${BRIDGE_LOG_EVERY}" &
 bridge_pid=$!
