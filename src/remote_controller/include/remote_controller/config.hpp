@@ -91,6 +91,16 @@ struct Binding {
     std::string output;
     std::string mode;
     ConditionConfig when;
+    int hold_ms = 0;
+    bool on_release = false;
+    bool interrupt = false;
+    bool bypass_rearm = false;
+};
+
+struct GestureConfig {
+    bool enabled = false;
+    ConditionConfig neutral;
+    ConditionConfig cancel_when;
 };
 
 struct CurvePoint {
@@ -188,6 +198,7 @@ struct RemoteConfig {
     std::vector<ControlConfig> controls;
     std::vector<AnalogOutputConfig> analog_outputs;
     std::vector<Binding> bindings;
+    GestureConfig gestures;
     KeyboardConfig keyboard;
     std::map<std::string, std::vector<std::string>> system_commands;
     std::vector<SystemMutexConfig> system_mutexes;

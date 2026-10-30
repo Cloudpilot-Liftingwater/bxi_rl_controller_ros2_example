@@ -29,6 +29,7 @@ from sensor_msgs.msg import JointState
 from ament_index_python.packages import get_package_share_directory
 
 from bxi_example_py_elf3.framework.runtime.state_machine import load_state_machine_config
+from bxi_example_py_elf3.framework.execution_observer import observe
 from bxi_example_py_elf3.framework.joints import (
     JointCommandDefaults,
     JointDefault,
@@ -153,6 +154,8 @@ class BxiExample(Node):
         self._observation: RobotObservation | None = None
 
         # 控制循环初始化
+        from .simulation_release import SimulationRelease
+        self._simulation_release = SimulationRelease()
         self.step = 0
         self._second_reset_at = 0.0
         self._reset_future = None
@@ -211,6 +214,12 @@ class BxiExample(Node):
         self.release_suspension = bool(
             self.get_parameter("/release_suspension").value
         )
+        self.declare_parameter("/simulation_release_on_normal", False)
+        self.simulation_release_on_normal = bool(self.get_parameter("/simulation_release_on_normal").value)
+        if self.simulation_release_on_normal:
+            if self.topic_prefix != "simulation/":
+                raise ValueError("simulation_release_on_normal is simulation-only")
+            self.release_suspension = False
         self.declare_parameter("/imu_startup_timeout_sec", 15.0)
         self.imu_startup_timeout_sec = float(
             self.get_parameter("/imu_startup_timeout_sec").value
@@ -333,7 +342,7 @@ class BxiExample(Node):
     # --------------------------- Runtime 平台适配接口 --------------------------- #
 
     def startup_step(self, now: float) -> bool:
-        """Perform the ELF3-specific two-stage reset before control starts."""
+        """Initialize control; the sim suite reserves step2 for landing."""
         if self.imu_required and not self._imu_received:
             if self._imu_startup_started_at is None:
                 self._imu_startup_started_at = now
@@ -367,6 +376,22 @@ class BxiExample(Node):
         if self.step == 1:
             if now < self._second_reset_at:
                 return False
+            if self.simulation_release_on_normal:
+                # Native BXI accepts step1 -> step2 exactly once. Sending
+                # step2/release=False here consumes step2 and prevents the
+                # later release. Like the official sim2sim controller, start
+                # suspended control after step1 and defer step2/release=True.
+                # self.step describes controller/input readiness, not the
+                # simulator's reset protocol phase.
+                self.step = 2
+                self.get_logger().info(
+                    "simulation control ready after reset step1; "
+                    "reset step2 reserved for normal/landing"
+                )
+                self.runtime.request_state(
+                    "com.bxi.basic_actions/pd_brake", trigger="AutoPdbreak"
+                )
+                return False
             if self._reset_pending_step == 2:
                 if not self._reset_request_completed(2, now):
                     return False
@@ -384,6 +409,8 @@ class BxiExample(Node):
                     "com.bxi.basic_actions/pd_brake", trigger="AutoPdbreak"
                 )
             return False
+        if self.simulation_release_on_normal:
+            self._simulation_release.tick(self, now, bxiSrv.RobotReset.Request)
         with self.lock_in:
             return self._joint_received
 
@@ -442,6 +469,9 @@ class BxiExample(Node):
                 f"IMU data timeout: no frame for {now - last_received_at:.3f}s; "
                 "entering locked IMU protection state"
             )
+            observe('test_event',self.runtime.current_state_name,'failed','IMU feedback timeout',
+                    severity='error',code='IMU_FEEDBACK_STALE',category='sensor',
+                    details={'observed_age_s':now-last_received_at,'threshold_s':self.imu_runtime_timeout_sec})
         if not self._imu_protection_latched:
             return
         protection_state = "com.bxi.basic_actions/imu_protection"
@@ -507,6 +537,10 @@ class BxiExample(Node):
         msg.kp = frame.kp.tolist()
         msg.kd = frame.kd.tolist()
         self.act_pub.publish(msg)
+        observe(
+            "command_published", msg, state_name,
+            self.runtime.framework.state_machine.in_transition,
+        )
 
     def _check_actuator_publishers(self):
         if self._shutting_down.is_set() or self._actuator_publisher_conflict:
@@ -535,6 +569,12 @@ class BxiExample(Node):
                 "step": int(self.step),
             }
         )
+        if self.simulation_release_on_normal:
+            info["simulation_release"] = dict(
+                confirmed=self._simulation_release.confirmed,
+                failed=self._simulation_release.failed,
+                step2_sent=self._simulation_release.future is not None,
+            )
 
         msg = String()
         msg.data = json.dumps(info, ensure_ascii=False, sort_keys=True)

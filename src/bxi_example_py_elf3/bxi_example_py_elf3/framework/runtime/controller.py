@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from bxi_example_py_elf3.framework.execution_observer import observe
+
 from bxi_example_py_elf3.framework.joints import (
     JointCommandDefaults,
     JointCommandResolver,
@@ -236,12 +238,15 @@ class RobotControlFramework:
             raise RuntimeError("RobotControlFramework is closed")
 
         self.dt = float(dt)
+        observe("begin_cycle")
         self._set_observation(observation)
         self._apply_pending_state_requests()
         self.current_cmd_vel.fill(0.0)
         self._motor_target = None
 
+        observe("set_transition", self.state_machine.in_transition)
         transition_active = self.state_machine.update(self.dt, events)
+        observe("set_transition", transition_active)
         if not transition_active:
             self.state_machine.update_current_state(self.dt)
         self._notify_state_observers()

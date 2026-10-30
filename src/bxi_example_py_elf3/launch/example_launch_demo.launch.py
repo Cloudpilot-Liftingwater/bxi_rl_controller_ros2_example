@@ -39,7 +39,8 @@ def generate_launch_description():
                     {"simulation/model_file": xml_file},
                 ],
                 emulate_tty=True,
-                arguments=[("__log_level:=debug")],
+                # BXI simulation expects its model as argv[1].
+                arguments=[xml_file],
             ),
 
             Node(
@@ -49,7 +50,9 @@ def generate_launch_description():
                 output="screen",
                 parameters=[
                     {"/topic_prefix": "simulation/"},
-                    {"/release_suspension": True},
+                    # Keep suspended through reset + PD startup. The simulation
+                    # keyboard releases only after observing active normal output.
+                    {"/release_suspension": False},
                     {"/npz_file_dict": json.dumps(npz_file_dict)},
                     {"/onnx_file_dict": json.dumps(onnx_file_dict)},
                 ],

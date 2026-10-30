@@ -10,6 +10,7 @@ _TEST_EVENTS = frozenset({
     _PREFIX + "vibration",
     _PREFIX + "whole_body_joint_test",
     _PREFIX + "sequence",
+    _PREFIX + "continue_suite",
 })
 
 
@@ -31,10 +32,12 @@ class TestRemoteGuard:
         self.observe_state(current_state)
         in_test = current_state.startswith(_PREFIX)
 
-        exit_pressed = in_test and _EXIT in events
+        # An explicit zero-torque exit must pass even during the full-release
+        # interlock after leaving suspended tests (e.g. ground preparation).
+        exit_pressed = _EXIT in events
         if exit_pressed:
             self._awaiting_release = True
-            if self._on_sequence_exit is not None:
+            if in_test and self._on_sequence_exit is not None:
                 self._on_sequence_exit(current_state)
 
         if self._awaiting_release:

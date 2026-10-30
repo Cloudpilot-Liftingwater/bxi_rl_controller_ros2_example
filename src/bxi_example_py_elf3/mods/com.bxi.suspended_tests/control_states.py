@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 import time
 from collections import Counter
 from pathlib import Path
@@ -34,6 +35,8 @@ from bxi_example_py_elf3.control.trajectory import (
 )
 from bxi_example_py_elf3.framework.joints import JointLayout
 from bxi_example_py_elf3.framework.mod_api import RobotControlState
+from bxi_example_py_elf3.framework.execution_observer import observe
+from bxi_example_py_elf3.model_test_safety import diagnostic
 
 
 TEST_LAYOUT = JointLayout(JOINT_NAMES, label="ELF3 suspended tests")
@@ -235,8 +238,10 @@ class TestSession:
         self.sequence_fault_reason = None
         self.sequence_exit_requested = False
         self.sequence_cancel_requested = False
+        self.sequence_handoff = False
 
     def start_sequence(self, logger, *, joint_command):
+        self.sequence_handoff = False
         self.sequence_id += 1
         self.sequence_active = True
         self.sequence_stage = SEQUENCE_JOINT
@@ -276,6 +281,7 @@ class TestSession:
                     DEFAULT_TORQUE_LIMIT_C,
                 )
         logger.warning("========== FULL B TEST #%d START ==========" % self.sequence_id)
+        observe('test_event','com.bxi.suspended_tests/sequence','started','joint range -> 300s vibration -> running')
         logger.warning(
             "B TEST #%d COMMAND: input=B; joint range -> vibration %.0f s "
             "(%.0f..%.0f Hz, amplitude %.2f rad) -> running trajectory "
@@ -292,6 +298,7 @@ class TestSession:
     def enter_sequence_stage(self, stage, label):
         if self.sequence_active:
             self.sequence_stage = stage
+            observe('test_event',stage,'stage_started',label)
             self.sequence_logger.warning(
                 "B TEST #%d %s started" % (self.sequence_id, label)
             )
@@ -308,6 +315,9 @@ class TestSession:
                 "========== B TEST #%d FAILED after %.1f s at %s: %s =========="
                 % (self.sequence_id, elapsed, self.sequence_stage, self.sequence_fault_reason)
             )
+        elif self.sequence_handoff and state_name == "com.bxi.execution_suite/ground_prepare":
+            self.sequence_logger.warning("B TEST #%d BASE_STAGES_COMPLETE: continue to dance and SONIC; full suite still pending" % self.sequence_id)
+            observe('test_event','com.bxi.suspended_tests/sequence','stage_complete','base stages complete; model stages still pending')
         elif (self.sequence_exit_requested or self.sequence_cancel_requested) and self.sequence_stage == SEQUENCE_RUNNING:
             self.sequence_logger.warning(
                 "========== B TEST #%d SUCCESS after %.1f s: operator ended running stage; "
@@ -361,6 +371,9 @@ class SuspendedState(RobotControlState):
         return self.session.ready and not self.session.faulted
 
     def _fault(self, ctx, reason):
+        if not self.session.faulted:
+            code,category=diagnostic(reason)
+            observe('test_event',self.name,'failed',reason,severity='error',code=code,category=category)
         self.session.ready = False
         self.session.faulted = True
         if self.session.sequence_active and self.session.sequence_fault_reason is None:
@@ -520,7 +533,15 @@ class SuspendedIdleState(SuspendedState):
         node = getattr(ctx, "ros_node", None)
         runtime = getattr(node, "runtime", None)
         if getattr(runtime, "current_state_name", None) == PD_BRAKE:
-            return str(getattr(node, "topic_prefix", "")).startswith("simulation/")
+            topic = getattr(node, "topic_prefix", "")
+            # The unified, explicitly selected test suite uses LB+B directly
+            # after PD startup on both platforms. Keep the legacy hardware
+            # entry rule when the suite is not selected.
+            return str(topic).startswith("simulation/") or (
+                topic == "hardware/"
+                and os.environ.get("BXI_EXECUTION_SUITE") == "1"
+                and os.environ.get("BXI_EXECUTION_SUITE_MODE", "manual") == "manual"
+            )
         return True
 
     def on_prepare(self, ctx, from_state):
@@ -575,7 +596,7 @@ class SuspendedIdleState(SuspendedState):
         if elapsed >= self.prepare_sec and not self.session.ready:
             if np.max(np.abs(measured - JOINT_NOMINAL_POS)) <= IDLE_CENTER_TOLERANCE_RAD:
                 self.session.ready = True
-                self.logger.info("suspended test preparation complete; X/Y/A ready")
+                self.logger.info("suspended test preparation complete; X/Y/A ready; READY for B sequence")
             elif elapsed >= self.prepare_sec + 5.0:
                 errors = np.abs(measured - JOINT_NOMINAL_POS)
                 index = int(np.argmax(errors))
@@ -864,6 +885,10 @@ class SuspendedLimbTestState(SuspendedState):
                     "joint-test segment %d tracking error %.3f rad"
                     % (self.segment_index + 1, error)
                 )
+                observe('test_event',self.name,'warning','joint range holding tolerance exceeded',
+                        severity='warning',code='JOINT_TRACKING_TOLERANCE',category='tracking',
+                        details={'segment':self.segment_index+1,'maximum_error_rad':error,
+                                 'threshold_rad':self.tracking_tolerance_rad,'joints':list(names)})
             self.segment_index += 1
             self.segment_started_at = time.monotonic()
             self.holding = False
@@ -877,6 +902,14 @@ class SuspendedLimbTestState(SuspendedState):
 
 class SequentialTemperatureGuard:
     def _check_temperature(self, ctx):
+        node = getattr(ctx, "ros_node", None)
+        if (os.environ.get("BXI_EXECUTION_SUITE") == "1"
+                and getattr(node, "topic_prefix", "") == "simulation/"):
+            if not getattr(self, "_thermal_not_observed", False):
+                self.logger.warning("SIM2SIM: thermal test not assessed; MuJoCo has no motor thermal model")
+                observe('test_event',self.name,'not_assessed','thermal: MuJoCo has no motor thermal model')
+                self._thermal_not_observed = True
+            return True
         if self.session.temperature_policy is None:
             reason = self.session.temperature_config_error
         else:
@@ -975,6 +1008,28 @@ def temperature_fault(ctx, *, policy, timeout_sec):
 
 class SequentialRunningState(SequentialTemperatureGuard, SuspendedRunningState):
     def on_enter(self, ctx):
+        self._suite_playback_started = False
         self.return_state = TEST_IDLE
         self.session.enter_sequence_stage(SEQUENCE_RUNNING, "STAGE 3/3: running")
         super().on_enter(ctx)
+
+    def on_update(self, ctx, dt):
+        super().on_update(ctx, dt)
+        if self.phase == "playback":self._suite_playback_started = True
+
+    def on_action(self, ctx, action_name):
+        if action_name != "continue_suite":
+            return super().on_action(ctx, action_name)
+        if (os.environ.get("BXI_EXECUTION_SUITE") != "1"
+                or getattr(getattr(ctx, "ros_node", None), "topic_prefix", "") not in ("simulation/", "hardware/")
+                or (getattr(ctx.ros_node, "topic_prefix", "") == "hardware/"
+                    and os.environ.get("BXI_EXECUTION_SUITE_MODE", "manual") != "manual")):
+            self.logger.warning("continue_suite requires the explicit execution suite; hardware requires manual mode")
+            return False
+        if (self.phase != "playback" and not self._suite_playback_started) or self.session.faulted or not self.session.sequence_active:
+            self.logger.warning("finish running preparation and enter playback before continuing")
+            return False
+        self.return_state = "com.bxi.execution_suite/ground_prepare"
+        self.session.sequence_handoff = True
+        ctx.ros_node.execution_suite_handoff = self.session.sequence_id
+        return super().on_action(ctx, "stop")

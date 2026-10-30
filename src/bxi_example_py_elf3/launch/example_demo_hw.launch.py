@@ -6,7 +6,7 @@ import sys
 from ament_index_python.packages import get_package_share_path
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, EnvironmentVariable
 from launch.actions import OpaqueFunction
 from launch_ros.actions import Node
 from bxi_example_py_elf3.framework.mod_api.hardware_launch import (
@@ -99,6 +99,30 @@ def generate_launch_description():
         declare_hardware_launch_arguments()
         + [
             DeclareLaunchArgument(
+                "execution_suite",
+                default_value=EnvironmentVariable("BXI_EXECUTION_SUITE", default_value="0"),
+                choices=["0", "1"],
+                description="Select the unified suspended/CXK/SONIC manual test workflow",
+            ),
+            DeclareLaunchArgument(
+                "sonic_root",
+                default_value=EnvironmentVariable("BXI_SONIC_ROOT", default_value=""),
+            ),
+            DeclareLaunchArgument(
+                "cxk_root",
+                default_value=EnvironmentVariable("BXI_CXK_ROOT", default_value=""),
+            ),
+            DeclareLaunchArgument(
+                "execution_eval",
+                default_value=EnvironmentVariable("ELF3_EVAL_ENABLE", default_value="0"),
+                choices=["0", "1"],
+                description="Enable passive model-target observation in the controller",
+            ),
+            DeclareLaunchArgument(
+                "execution_eval_socket",
+                default_value=EnvironmentVariable("ELF3_EVAL_SOCKET", default_value="elf3_model_eval_v1"),
+            ),
+            DeclareLaunchArgument(
                 "imu_runtime_timeout_sec",
                 default_value="0.1",
                 description="Seconds without IMU data before locked protection",
@@ -110,6 +134,14 @@ def generate_launch_description():
                 package="bxi_example_py_elf3",
                 executable="bxi_example_py_elf3_demo",
                 name="bxi_example_py_elf3_demo",
+                additional_env={
+                    "BXI_EXECUTION_SUITE": LaunchConfiguration("execution_suite"),
+                    "BXI_EXECUTION_SUITE_MODE": "manual",
+                    "BXI_SONIC_ROOT": LaunchConfiguration("sonic_root"),
+                    "BXI_CXK_ROOT": LaunchConfiguration("cxk_root"),
+                    "ELF3_EVAL_ENABLE": LaunchConfiguration("execution_eval"),
+                    "ELF3_EVAL_SOCKET": LaunchConfiguration("execution_eval_socket"),
+                },
                 output="screen",
                 parameters=[
                     {"/topic_prefix": "hardware/"},

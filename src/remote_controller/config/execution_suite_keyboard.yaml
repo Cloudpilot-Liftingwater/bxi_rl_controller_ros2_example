@@ -1,0 +1,48 @@
+sources:
+  keyboard:
+    type: keyboard
+    priority: 0
+    hold_ms: 150
+    stop: space
+    signals:
+      key.pd: {from: keyboard.key, key: p}
+      key.test: {from: keyboard.key, key: t}
+      key.joint: {from: keyboard.key, key: a}
+      key.vibration: {from: keyboard.key, key: y}
+      key.running: {from: keyboard.key, key: x}
+      key.sequence: {from: keyboard.key, key: b}
+      key.continue: {from: keyboard.key, key: c}
+      key.normal: {from: keyboard.key, key: n}
+      key.dance: {from: keyboard.key, key: d}
+      key.sonic06: {from: keyboard.key, key: f}
+      key.sonic11: {from: keyboard.key, key: g}
+      key.exit: {from: keyboard.key, key: q}
+controls:
+  pd: {type: bool, inputs: [{source: key.pd}]}
+  test: {type: bool, inputs: [{source: key.test}]}
+  joint: {type: bool, inputs: [{source: key.joint}]}
+  vibration: {type: bool, inputs: [{source: key.vibration}]}
+  running: {type: bool, inputs: [{source: key.running}]}
+  sequence: {type: bool, inputs: [{source: key.sequence}]}
+  continue: {type: bool, inputs: [{source: key.continue}]}
+  normal: {type: bool, inputs: [{source: key.normal}]}
+  dance: {type: bool, inputs: [{source: key.dance}]}
+  sonic06: {type: bool, inputs: [{source: key.sonic06}]}
+  sonic11: {type: bool, inputs: [{source: key.sonic11}]}
+  exit: {type: bool, inputs: [{source: key.exit}]}
+outputs:
+  conflict_policy: first_wins
+  publish_on_change: true
+  level:
+    - {output: 'btn_3=1', when: [pd]}
+    - {output: 'btn_8=1', when: [test]}
+    - {output: 'btn_7=1', when: [joint]}
+    - {output: 'btn_10=1', when: [vibration]}
+    - {output: 'btn_9=1', when: [running]}
+    - {output: 'btn_9=2', when: [sequence]}
+    - {output: 'btn_9=3', when: [continue]}
+    - {output: 'btn_1=1', when: [normal]}
+    - {output: 'btn_6=3', when: [dance]}
+    - {output: 'btn_6=4', when: [sonic06]}
+    - {output: 'btn_6=5', when: [sonic11]}
+    - {output: 'btn_8=2', when: [exit]}

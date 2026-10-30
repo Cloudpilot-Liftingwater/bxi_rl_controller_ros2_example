@@ -1,0 +1,48 @@
+# Test-only, immediate two-key actions; View/Back is immediate zero torque.
+# Button 10 was read from the connected PowerA as Linux BTN_SELECT (0x13a).
+inputs:
+  selection: {scan_interval_ms: 100, promote_stable_ms: 500}
+sources:
+  gamepad:
+    type: joystick
+    device: /dev/input/js0
+    priority: 50
+    ready_timeout_ms: 1000
+    loss_timeout_ms: 300
+    cooldown_ms: 1000
+    signals:
+      gamepad.lb: {from: js.button.6}
+      gamepad.rb: {from: js.button.7}
+      gamepad.a: {from: js.button.0}
+      gamepad.b: {from: js.button.1}
+      gamepad.x: {from: js.button.3}
+      gamepad.y: {from: js.button.4}
+      gamepad.stop: {from: js.button.10}
+controls:
+  lb: {type: bool, inputs: [{source: gamepad.lb}]}
+  rb: {type: bool, inputs: [{source: gamepad.rb}]}
+  a: {type: bool, inputs: [{source: gamepad.a}]}
+  b: {type: bool, inputs: [{source: gamepad.b}]}
+  x: {type: bool, inputs: [{source: gamepad.x}]}
+  y: {type: bool, inputs: [{source: gamepad.y}]}
+  stop: {type: bool, inputs: [{source: gamepad.stop}]}
+outputs:
+  conflict_policy: error
+  publish_on_change: true
+  level:
+    # Zero torque works with any keys held, even before neutral/rearm.
+    - {output: 'btn_8=2', bypass_rearm: true, when: stop}
+    - {output: 'btn_1=1', when: &normal [rb, x, {released: stop}]}
+    - {output: 'btn_8=3', when: {all: [{released: stop}, {any: [lb, rb, a, b, x, y]}]}}
+  gestures:
+    neutral: [{released: lb}, {released: rb}, {released: a}, {released: b}, {released: x}, {released: y}, {released: stop}]
+    cancel_when: {any: [stop, {all: *normal}, [lb, rb], [rb, a], [a, b], [a, x], [a, y], [b, x], [b, y], [x, y]]}
+    bindings:
+      - {output: 'btn_3=1', hold_ms: 0, when: [rb, b, {released: lb}, {released: a}, {released: x}, {released: y}, {released: stop}]}
+      - {output: 'btn_8=1', hold_ms: 0, when: [lb, b, {released: rb}, {released: a}, {released: x}, {released: y}, {released: stop}]}
+      # A lone B submits on release; touching a modifier invalidates the click.
+      - {output: 'btn_9=2', hold_ms: 0, on_release: true, when: [b, {released: lb}, {released: rb}, {released: a}, {released: x}, {released: y}, {released: stop}]}
+      - {output: 'btn_9=3', hold_ms: 0, when: [rb, y, {released: lb}, {released: a}, {released: b}, {released: x}, {released: stop}]}
+      - {output: 'btn_6=3', hold_ms: 0, when: [lb, a, {released: rb}, {released: b}, {released: x}, {released: y}, {released: stop}]}
+      - {output: 'btn_6=4', hold_ms: 0, when: [lb, x, {released: rb}, {released: a}, {released: b}, {released: y}, {released: stop}]}
+      - {output: 'btn_6=5', hold_ms: 0, when: [lb, y, {released: rb}, {released: a}, {released: b}, {released: x}, {released: stop}]}
