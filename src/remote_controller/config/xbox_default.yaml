@@ -151,6 +151,9 @@ outputs:
       when: [shoulder.right_event, button.b_event, {released: shoulder.left_event}]
     - output: btn_4=1
       when: [shoulder.right_event, button.y_event, {released: shoulder.left_event}]
+    # 独立走路模式中的模型一致性测试快捷键：
+    # LB+RT+A -> btn_6=3 -> CXK；LB+RT+X -> btn_6=4 -> SONIC 06；
+    # LB+RT+Y -> btn_6=5 -> SONIC 11。每次只触发一个动作。
     # Execution suite: hold LB + RT, then one face button. RB stays released.
     # Keep RB+X (normal) and both-shoulders+B (zero torque) available above.
     # The suite's remote filter waits for neutral after each request, so
