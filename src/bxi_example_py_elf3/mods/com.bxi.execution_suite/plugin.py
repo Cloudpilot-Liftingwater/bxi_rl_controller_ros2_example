@@ -1,4 +1,4 @@
-"""Append model tests to the existing B sequence; keep one BXI publisher."""
+"""Manual model checks from existing walking states; no suspended-test handoff."""
 import importlib
 import importlib.util
 import os
@@ -8,7 +8,7 @@ from types import ModuleType
 
 import numpy as np
 
-from bxi_example_py_elf3.framework.execution_observer import observe, log_message
+from bxi_example_py_elf3.framework.execution_observer import observe
 from bxi_example_py_elf3.framework.mod_api import ModDefinition,ResourceKey
 from bxi_example_py_elf3.sonic_file import SonicFilePolicy
 from bxi_example_py_elf3.model_test_safety import ModelTemperatureGuard
@@ -31,11 +31,11 @@ class Session:
 
     def mark(self,status,reason='',**details):
         severity='error' if status=='failed' else 'warning' if status in ('cancelled','interrupted') else 'info'
-        log_message(self.logger,severity,'EXECUTION_SUITE '+status+': '+reason)
+        # The model state writes the single concise human-readable result.
         observe('test_event',PREFIX+'suite',status,reason,severity=severity,**details)
 
     def begin(self,ctx,logger):
-        self.active=True;self.ctx=ctx;self.logger=logger
+        self.active=True;self.ctx=ctx;self.logger=logger;self.faulted=False
         self.mark('started','standalone walking-mode model test; select one action manually')
 
     def complete(self,stage):
@@ -72,7 +72,7 @@ def create_mod(context):
             super().__init__(name,state_id,policy,temperature_guard=thermal)
             self.stage=stage;self.reported=False
         def is_available(self,ctx):
-            return enabled(ctx) and not session.faulted
+            return enabled(ctx)
         def on_prepare(self,ctx,from_state):
             if not session.active:
                 session.begin(ctx,self.logger)
@@ -86,6 +86,20 @@ def create_mod(context):
         def _fail(self,ctx,reason,**details):
             session.abort(self.stage+': '+reason)
             super()._fail(ctx,reason,**details)
+        def sample_running_frame(self,ctx,dt,*,advance):
+            try:
+                return super().sample_running_frame(ctx,dt,advance=advance)
+            except Exception:
+                if self.result!='failed':
+                    raise
+                # A blend previews the target outside on_update. Keep its
+                # last valid command for this tick while the queued fault
+                # transition returns to normal/zero; never return bad output
+                # or let the diagnostic terminate the controller thread.
+                from bxi_example_py_elf3.framework.mod_api import MotorFrame
+                last=ctx.last_motor_frame
+                return MotorFrame.create(last.layout,last.qpos.copy(),last.kp.copy(),
+                    last.kd.copy(),vel=last.vel.copy(),torque=last.torque.copy())
         def _validate_frame(self,frame):
             if session.ctx is None or not enabled(session.ctx):return super()._validate_frame(frame)
             # Both original decoders use physical PD targets, which need not
@@ -110,7 +124,7 @@ def create_mod(context):
             return super().on_action(ctx,action_name)
     handles={}
     def load_cxk(resource):
-        root=Path(os.environ.get('BXI_CXK_ROOT','/data/ros2_ws/备份/com.bxi.cxk'))/'assets'
+        root=Path(os.environ.get('BXI_CXK_ROOT') or '/data/ros2_ws/备份/com.bxi.cxk')/'assets'
         return dance_policy.load_dance_policy(root/'cxkv5.npz',root/'cxkv5_15k.onnx',
                                              variant='gravity_isaaclab_v3',start_frame=0,fixed_pos=True)
     startup='startup' if os.environ.get('BXI_EXECUTION_SUITE')=='1' else 'on_demand'

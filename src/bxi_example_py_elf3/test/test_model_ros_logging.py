@@ -15,15 +15,6 @@ def ros_logger():
     return logger
 
 
-def test_real_ros_session_progress_cancel_and_fault_share_no_severity_callsite():
-    session = module("mods/com.bxi.execution_suite/plugin.py", "ros_logging_suite").Session()
-    session.logger = ros_logger()
-    for status in ("started", "cancelled", "stage_complete", "failed", "interrupted", "playback_complete"):
-        session.mark(status, "regression")
-    assert {value["severity"] for value in session.logger.contexts.values()} >= {
-        LoggingSeverity.INFO, LoggingSeverity.WARN, LoggingSeverity.ERROR}
-
-
 @pytest.mark.parametrize("stage", ["dance", "sonic06", "sonic11"])
 def test_real_ros_model_progress_cancel_and_fault_share_no_severity_callsite(monkeypatch, stage):
     sm, states, ctx, frames, tick = machine(monkeypatch)

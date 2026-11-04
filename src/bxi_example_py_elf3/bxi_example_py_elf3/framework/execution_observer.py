@@ -1,4 +1,15 @@
 """Optional passive evaluator. Observation failures never change control flow."""
+from weakref import WeakSet
+
+_command_listeners = WeakSet()
+
+
+def add_command_listener(listener):
+    _command_listeners.add(listener)
+
+
+def remove_command_listener(listener):
+    _command_listeners.discard(listener)
 
 try:
     from elf3_eval import host as _host
@@ -7,6 +18,12 @@ except Exception:
 
 
 def observe(method, *args, **kwargs):
+    if method == "command_published":
+        for listener in tuple(_command_listeners):
+            try:
+                listener.command_published(*args, **kwargs)
+            except Exception:
+                listener.observer_failed = True
     if _host is None:
         return
     try:

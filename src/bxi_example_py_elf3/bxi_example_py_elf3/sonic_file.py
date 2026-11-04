@@ -24,7 +24,7 @@ def sonic_module(root):
 
 class SonicFilePolicy:
     def __init__(self, reference, *, clip_id, logger):
-        root=Path(os.environ.get('BXI_SONIC_ROOT','/data/ros2_ws/com.bxi.sonic-main'))
+        root=Path(os.environ.get('BXI_SONIC_ROOT') or '/data/ros2_ws/com.bxi.sonic-main')
         module=sonic_module(root)
         self.module=module;self.clip_id=clip_id
         self.reference_path=Path(reference)

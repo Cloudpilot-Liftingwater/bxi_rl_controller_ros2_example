@@ -239,8 +239,7 @@ def test_test_mode_has_one_button_exit_and_ignores_basic_mode_buttons():
     assert config["events"]["test_mode"] == {"slot": "btn_8", "value": 1}
     assert config["events"]["exit_test_mode"] == {"slot": "btn_8", "value": 2}
     assert config["events"]["sequence"] == {"slot": "btn_9", "value": 2}
-    action_by_state = {action["from"]: action for action in config["actions"] if action['event'] != 'continue_suite'}
-    assert [a['from'] for a in config['actions'] if a['event']=='continue_suite']==['sequence_running']
+    action_by_state = {action["from"]: action for action in config["actions"]}
     for source, event in (
         ("running", "running"),
         ("vibration", "vibration"),

@@ -20,6 +20,7 @@ sources:
       gamepad.lb: {from: js.button.6}
       gamepad.rb: {from: js.button.7}
       gamepad.stop: {from: js.button.11}
+      gamepad.zero_torque: {from: js.button.10}
       gamepad.start: {from: js.button.14}
       gamepad.start_extra: {from: js.button.13}
       gamepad.a: {from: js.button.0}
@@ -79,6 +80,7 @@ controls:
     alpha: 0.05
 
   system.stop_event: {type: bool, inputs: [{source: gamepad.stop}]}
+  system.zero_torque_event: {type: bool, inputs: [{source: gamepad.zero_torque}]}
   system.start_event: {type: bool, inputs: [{source: gamepad.start}]}
   system.start_hardware_event: {type: bool, inputs: [{source: gamepad.start_extra}]}
   button.a_event: {type: bool, inputs: [{source: gamepad.a}]}
@@ -115,6 +117,11 @@ outputs:
       when: [system.start_hardware_event]
 
   level:
+    # View/Back requests zero torque in basic/model AND original test states.
+    - output: btn_8=2
+      when: [system.zero_torque_event]
+    - output: btn_2=1
+      when: [system.zero_torque_event]
     # Both shoulders + B exits suspended tests to zero torque.
     - output: btn_8=2
       when: [shoulder.left_event, shoulder.right_event, button.b_event]
@@ -129,6 +136,13 @@ outputs:
       when: [shoulder.right_event]
     - output: btn_8=3
       when: [button.b_event]
+    # Keep model-request releases non-neutral until RT and the face are up.
+    - output: btn_8=3
+      when: [trigger.right_event, button.a_event]
+    - output: btn_8=3
+      when: [trigger.right_event, button.x_event]
+    - output: btn_8=3
+      when: [trigger.right_event, button.y_event]
     # Both shoulders + X toggles the forward/back mode from normal.
     - output: btn_5=1
       when: [shoulder.left_event, shoulder.right_event, button.x_event]
@@ -166,12 +180,12 @@ outputs:
 system:
   start:
     - "mkdir -p /var/log/bxi_log/imu"
-    - "ros2 launch bxi_example_py_elf3 example_demo_hw.launch.py enable_imu:=false > /var/log/bxi_log/test_$(date +%Y-%m-%d_%H-%M-%S)_elf.log 2>&1 &"
+    - "ros2 launch bxi_example_py_elf3 example_demo_hw.launch.py enable_imu:=false execution_eval:=1 > /var/log/bxi_log/test_$(date +%Y-%m-%d_%H-%M-%S)_elf.log 2>&1 &"
     - "bash -c 'imu_log=/var/log/bxi_log/imu/imu_$(date +%Y-%m-%d_%H-%M-%S).log; exec \"$(ros2 pkg prefix remote_controller)/share/remote_controller/scripts/start_imu_if_owned.sh\" \"$imu_log\"' > /var/log/bxi_log/imu/guard_$(date +%Y-%m-%d_%H-%M-%S).log 2>&1 &"
     - "ros2 launch bxi_example_bms bms.launch.py > /var/log/bxi_log/bms_$(date +%Y-%m-%d_%H-%M-%S)_bms.log 2>&1 &"
   start_hardware:
     - "mkdir -p /var/log/bxi_log/imu"
-    - "bash -c 'stamp=$(date +%Y-%m-%d_%H-%M-%S); log=/var/log/bxi_log/test_${stamp}_elf.log; ln -s \"$log\" /var/log/bxi_log/imu/imu_${stamp}.log; exec ros2 launch bxi_example_py_elf3 example_demo_hw.launch.py enable_imu:=true > \"$log\" 2>&1' &"
+    - "bash -c 'stamp=$(date +%Y-%m-%d_%H-%M-%S); log=/var/log/bxi_log/test_${stamp}_elf.log; ln -s \"$log\" /var/log/bxi_log/imu/imu_${stamp}.log; exec ros2 launch bxi_example_py_elf3 example_demo_hw.launch.py enable_imu:=true execution_eval:=1 > \"$log\" 2>&1' &"
     - "ros2 launch bxi_example_bms bms.launch.py > /var/log/bxi_log/bms_$(date +%Y-%m-%d_%H-%M-%S)_bms.log 2>&1 &"
   stop:
     - "pkill -SIGINT -f '[r]os2 launch bxi_example_py_elf3 example_demo_hw[.]launch[.]py|[h]ardware_elf3|[b]xi_example_py_elf3_demo|[/]start_imu_if_owned[.]sh|[/]imu_publisher_guard|[r]os2 launch bxi_imu imu[.]launch[.]py|[/]imu_node' || true"

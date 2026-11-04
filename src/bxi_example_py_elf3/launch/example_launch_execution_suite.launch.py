@@ -1,4 +1,4 @@
-"""Full robot_test simulation: official BXI simulator and one BXI controller."""
+"""Standalone model checks: official BXI simulator and one BXI controller."""
 from ament_index_python.packages import get_package_share_path
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument,EmitEvent,RegisterEventHandler
@@ -22,7 +22,7 @@ def generate_launch_description():
                         'BXI_SONIC_ROOT':LaunchConfiguration('sonic_root'),
                         'BXI_CXK_ROOT':LaunchConfiguration('cxk_root')})
     return LaunchDescription([
-        DeclareLaunchArgument('execution_mode',default_value=EnvironmentVariable('BXI_EXECUTION_SUITE_MODE',default_value='manual'),choices=['manual','auto']),
+        DeclareLaunchArgument('execution_mode',default_value='manual',choices=['manual']),
         DeclareLaunchArgument('execution_eval_socket',default_value='elf3_eval_mujoco_suite_v1'),
         DeclareLaunchArgument('sonic_root',default_value=EnvironmentVariable('BXI_SONIC_ROOT',default_value='/data/ros2_ws/com.bxi.sonic-main')),
         DeclareLaunchArgument('cxk_root',default_value=EnvironmentVariable('BXI_CXK_ROOT',default_value='/data/ros2_ws/备份/com.bxi.cxk')),

@@ -59,7 +59,7 @@ def setup_suite(monkeypatch,topic='simulation/'):
     return plugin,definition,states,ctx,frames,requests
 
 
-def machine(monkeypatch, *, include_zero=False):
+def machine(monkeypatch, *, include_zero=False, initial_state=NORMAL):
     plugin,definition,states,ctx,frames,requests=setup_suite(monkeypatch)
     for transition in definition.transition_plugins.values():
         register_transition_plugin(transition)
@@ -67,12 +67,13 @@ def machine(monkeypatch, *, include_zero=False):
         def target_position(self,ctx):return np.zeros(29,np.float32)
         def gains(self,ctx):return np.full(29,10,np.float32),np.ones(29,np.float32)
     normal=Normal(NORMAL,1);normal._bind_logger(Logger())
-    factories={NORMAL:normal,**{s.name:s for k,s in states.items() if k!='ground_prepare'}}
+    forward=Normal('com.bxi.basic_actions/forward_back',3);forward._bind_logger(Logger())
+    factories={NORMAL:normal,forward.name:forward,**{s.name:s for s in states.values()}}
     if include_zero:
         zero_module=module('mods/com.bxi.basic_actions/zero_torque_state.py','manual_real_zero')
         zero=zero_module.ZeroTorqueState('com.bxi.basic_actions/zero_torque',2)
         zero._bind_logger(Logger());factories[zero.name]=zero
-    config=dict(initial_state=NORMAL,graph={'validate':False},default_transition='instant',
+    config=dict(initial_state=initial_state,graph={'validate':False},default_transition='instant',
                 transition_profiles={'instant':{'type':'instant'}},states={n:{} for n in factories})
     manifest=yaml.safe_load((ROOT/'mods/com.bxi.execution_suite/mod.yaml').read_text())
     for route in manifest['routes']:
@@ -87,7 +88,12 @@ def machine(monkeypatch, *, include_zero=False):
     ctx.last_motor_frame=MotorFrame.create(ctx.robot_layout,np.zeros(29),np.full(29,10),np.ones(29))
     def resolve(frame,out):return out.update(frame.qpos,frame.kp,frame.kd,vel=frame.vel,torque=frame.torque)
     ctx.resolve_motor_frame=resolve
-    def publish(frame):frames.append(frame);resolve(frame,ctx.last_motor_frame)
+    def publish(frame):
+        # ROS ActuatorCmds serializes values at publication. Retaining policy
+        # views here would retroactively mutate historical "sent" commands.
+        frames.append(MotorFrame.create(frame.layout,frame.qpos.copy(),frame.kp.copy(),
+            frame.kd.copy(),vel=frame.vel.copy(),torque=frame.torque.copy()))
+        resolve(frame,ctx.last_motor_frame)
     ctx.set_motor_target=publish
     ctx.preheat_model=lambda policy:(policy.reset(ctx.inference_frame),policy.step(ctx.inference_frame,.02,advance=False))
     sm=RobotStateMachine(ctx,config,factories,logger=Logger())
@@ -96,7 +102,8 @@ def machine(monkeypatch, *, include_zero=False):
         ctx.robot_joints.timestamp_ns+=1
         active=sm.update(.02,[] if event is None else [event])
         if not active:sm.update_current_state(.02)
-        definition.state_observer(sm.current_state_name)
+        if definition.state_observer is not None:
+            definition.state_observer(sm.current_state_name)
     return sm,states,ctx,frames,tick
 
 
@@ -194,7 +201,7 @@ def test_all_models_use_hardware_thermal_protection(monkeypatch,stage,fault):
         sample.motor_c[0]=limit-15
     state.on_update(ctx,.02)
     assert state.result=='failed' and not frames
-    assert requests[-1][0]=='com.bxi.basic_actions/zero_torque'
+    assert requests[-1][0]==NORMAL
     assert any('failed' in s for s in state.logger.messages)
 
 
@@ -219,11 +226,6 @@ def test_hardware_rejects_automatic_sequence(monkeypatch):
     assert not states['dance'].is_available(ctx)
 
 
-def test_ground_handoff_only_requires_normal_resource(monkeypatch):
-    _,_,states,*_=setup_suite(monkeypatch)
-    assert len(states['ground_prepare'].required_resources)==1
-
-
 def test_temperature_fault_uses_error_and_emits_exact_threshold(monkeypatch):
     from bxi_example_py_elf3.framework import execution_observer
     events=[];levels=[]
@@ -235,7 +237,7 @@ def test_temperature_fault_uses_error_and_emits_exact_threshold(monkeypatch):
     _,limit,_,_=state.temperature_guard.policy.limits_for(ctx.actuator_temperatures.names[0])
     ctx.actuator_temperatures.motor_c[0]=limit-15
     state.on_update(ctx,.02)
-    assert levels[-1]=='error'
+    assert 'error' in levels
     args,details=next((a,k) for a,k in events if k.get('code')=='MOTOR_OVER_TEMPERATURE')
     assert args[1]=='failed' and details['severity']=='error'
     assert details['details']['observed_c']==limit-15

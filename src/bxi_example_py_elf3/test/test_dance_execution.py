@@ -99,7 +99,7 @@ def test_dance_routes_are_separate_and_have_cancel_and_safety():
     assert any(r.get('action')=='cancel' for r in config['actions'])
     assert any(r.get('to')=='com.bxi.basic_actions/zero_torque' for r in config['routes'])
     remote=yaml.safe_load((ROOT.parent/'remote_controller/config/xbox_default.yaml').read_text())
-    assert any(r['output']=='btn_6=2' for r in remote['outputs']['level'])
+    assert {r['output'] for r in remote['outputs']['level']} >= {'btn_6=3','btn_6=4','btn_6=5'}
 
 
 def test_all_builtin_mod_manifests_compile_together_without_input_conflicts(monkeypatch):
@@ -267,7 +267,7 @@ def test_control_faults_do_not_complete_playback(modules,assets,fault):
             policy.inner._backend.run=lambda inputs:dict(actions=np.full((1,29),value,np.float32))
         state.on_update(ctx,.02)
         assert state.result=='failed';assert not frames
-        assert requests[-1][0]==modules.state.ZERO
+        assert requests[-1][0]==(modules.state.ZERO if fault in ("feedback", "orientation") else modules.state.NORMAL)
     finally:policy.close()
 
 
@@ -287,7 +287,7 @@ def test_invalid_preview_requests_fault_and_never_returns_command(modules,assets
         monkeypatch.setattr(policy.inner._backend,'run',lambda inputs:dict(actions=np.full((1,29),np.nan,np.float32)))
         with pytest.raises(ValueError):state.sample_running_frame(ctx,.02,advance=False)
         assert state.result=='failed';assert not frames
-        assert requests[-1][0]==modules.state.ZERO
+        assert requests[-1][0]==modules.state.NORMAL
     finally:policy.close()
 
 
