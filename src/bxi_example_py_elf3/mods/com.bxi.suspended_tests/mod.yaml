@@ -24,7 +24,6 @@ events:
   vibration: {slot: btn_10, value: 1}
   whole_body_joint_test: {slot: btn_7, value: 1}
   sequence: {slot: btn_9, value: 2}
-  continue_suite: {slot: btn_9, value: 3}
 
 states:
   idle:
@@ -96,4 +95,3 @@ actions:
   - {from: sequence_joint, event: sequence, action: cancel_sequence, manifest: {label: 退出自动测试}}
   - {from: sequence_vibration, event: sequence, action: cancel_sequence, manifest: {label: 退出自动测试}}
   - {from: sequence_running, event: sequence, action: cancel_sequence, manifest: {label: 退出自动测试}}
-  - {from: sequence_running, event: continue_suite, action: continue_suite, manifest: {label: 完成跑步并继续模型测试}}

@@ -57,10 +57,9 @@ bool parse_int_text(const std::string &text, int &value)
 
 }  // namespace
 
-InputMapper::InputMapper(RemoteConfig config, GestureClock gesture_clock)
+InputMapper::InputMapper(RemoteConfig config)
     : config_(std::move(config)),
-      binding_active_(config_.bindings.size(), false),
-      gesture_clock_(std::move(gesture_clock))
+      binding_active_(config_.bindings.size(), false)
 {
     refresh_controls();
     refresh_bindings();
@@ -111,7 +110,6 @@ void InputMapper::set_input_edges_enabled(bool enabled)
     input_edges_enabled_ = enabled;
     if (!enabled) {
         std::fill(edge_pulse_slots_, edge_pulse_slots_ + kButtonSlotCount + 1, 0);
-        reset_gestures();
     }
 }
 
@@ -269,7 +267,6 @@ void InputMapper::zero_motion_axes()
 
 void InputMapper::reset_motion()
 {
-    reset_gestures();
     std::set<std::string> motion_sources;
     for (const auto &output : config_.analog_outputs) {
         for (const auto &output_control : output.controls) {
@@ -320,7 +317,6 @@ std::vector<std::string> InputMapper::tick()
 {
     const auto now = std::chrono::steady_clock::now();
     bool changed = false;
-    bool source_lost = false;
     for (auto it = signal_expiry_.begin(); it != signal_expiry_.end();) {
         if (it->second <= now) {
             signals_[it->first] = 0.0;
@@ -344,14 +340,13 @@ std::vector<std::string> InputMapper::tick()
             signals_[runtime.source] = runtime.failsafe;
             timed_out_sources_.insert(runtime.source);
             changed = true;
-            source_lost = true;
         }
     }
 
-    if (!changed && !config_.gestures.enabled) {
+    if (!changed) {
         return {};
     }
-    return refresh_bindings(!(source_lost && config_.gestures.enabled));
+    return refresh_bindings();
 }
 
 std::vector<std::string> InputMapper::handle_button(int button_index, bool pressed)
@@ -466,110 +461,15 @@ std::vector<std::string> InputMapper::refresh_bindings(bool emit_edges)
                     edge_outputs.push_back(binding.output);
                 }
             }
-        } else if (binding.mode == "level" && active &&
-            (!config_.gestures.enabled || gesture_armed_ || binding.bypass_rearm)) {
+        } else if (active) {
             apply_level_output(binding.output);
         }
 
         binding_active_[index] = active;
     }
-    refresh_gestures(emit_edges);
     log_button_output_changes();
 
     return edge_outputs;
-}
-
-void InputMapper::reset_gestures()
-{
-    gesture_armed_ = false;
-    gesture_active_ = false;
-    gesture_consumed_ = false;
-    gesture_release_valid_ = false;
-    gesture_interrupt_fired_ = false;
-    gesture_release_index_ = -1;
-    gesture_hold_index_ = -1;
-}
-
-void InputMapper::refresh_gestures(bool emit_edges)
-{
-    if (!config_.gestures.enabled) {return;}
-    if (!emit_edges || !input_edges_enabled_) {
-        // Source loss/activation must never synthesize a release action.
-        reset_gestures();
-        std::fill(edge_pulse_slots_, edge_pulse_slots_ + kButtonSlotCount + 1, 0);
-        return;
-    }
-    const auto now = gesture_clock_();
-    if (condition_matches(config_.gestures.neutral)) {
-        if (gesture_active_ && !gesture_consumed_ && gesture_release_valid_) {
-            const auto &binding = config_.bindings.at(gesture_release_index_);
-            if (now - gesture_started_ >= std::chrono::milliseconds(binding.hold_ms)) {
-                apply_edge_pulse_output(binding.output);
-            }
-        }
-        reset_gestures();
-        gesture_armed_ = true;
-        return;
-    }
-    if (!gesture_armed_) {return;}
-    if (condition_matches(config_.gestures.cancel_when)) {
-        // Immediate normal is a level output; it cancels pending gestures too.
-        std::fill(edge_pulse_slots_, edge_pulse_slots_ + kButtonSlotCount + 1, 0);
-        gesture_active_ = true;
-        gesture_consumed_ = true;
-        gesture_release_valid_ = false;
-        gesture_hold_index_ = -1;
-        return;
-    }
-    if (!gesture_active_) {
-        gesture_active_ = true;
-        gesture_started_ = now;
-        for (std::size_t i = 0; i < config_.bindings.size(); ++i) {
-            const auto &binding = config_.bindings[i];
-            if (binding.mode == "gesture" && binding.on_release && conditions_match(binding)) {
-                gesture_release_index_ = static_cast<int>(i);
-                gesture_release_valid_ = true;
-                break;
-            }
-        }
-    } else if (gesture_release_valid_ &&
-        !conditions_match(config_.bindings.at(gesture_release_index_))) {
-        // A lone B stops being a click once ANY modifier/other key was seen.
-        // Returning to B during release must not resurrect that click.
-        gesture_release_valid_ = false;
-    }
-    int match = -1;
-    for (std::size_t i = 0; i < config_.bindings.size(); ++i) {
-        const auto &binding = config_.bindings[i];
-        if (binding.mode != "gesture" || binding.on_release ||
-            (gesture_consumed_ && !binding.interrupt) ||
-            (binding.interrupt && gesture_interrupt_fired_) || !conditions_match(binding)) {continue;}
-        if (match >= 0) {
-            // Ambiguous configuration/input: reject this whole physical gesture.
-            gesture_consumed_ = true;
-            gesture_release_valid_ = false;
-            gesture_hold_index_ = -1;
-            return;
-        }
-        match = static_cast<int>(i);
-    }
-    if (match != gesture_hold_index_) {
-        gesture_hold_index_ = match;
-        gesture_hold_started_ = now;
-    }
-    if (match >= 0) {
-        const auto &binding = config_.bindings.at(match);
-        if (now - gesture_hold_started_ >= std::chrono::milliseconds(binding.hold_ms)) {
-            if (binding.interrupt) {
-                std::fill(edge_pulse_slots_, edge_pulse_slots_ + kButtonSlotCount + 1, 0);
-            }
-            apply_edge_pulse_output(binding.output);
-            gesture_consumed_ = true;
-            gesture_release_valid_ = false;
-            // An interrupt is also one-shot until the complete chord changes.
-            if (binding.interrupt) {gesture_interrupt_fired_ = true;}
-        }
-    }
 }
 
 void InputMapper::log_button_output_changes()

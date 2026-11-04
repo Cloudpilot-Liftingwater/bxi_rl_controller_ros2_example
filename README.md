@@ -20,13 +20,10 @@ The binary ROS2 packages of ROS2 environment and mujoco can be find here:[`bxi_r
 
 ## Usage
 
-本任务新增[人工模型测试流程](src/bxi_example_py_elf3/mods/com.bxi.execution_suite/README.zh-CN.md)：
-真机与仿真共用同一份手柄映射；[统一真机入口与六步验收](src/bxi_example_py_elf3/mods/com.bxi.execution_suite/HARDWARE.zh-CN.md)
-复用原硬件启动和B测试，再由操作者逐项启动CXK、SONIC06、SONIC11。
-手柄 RB＋Y 结束跑步后停在 normal，LB＋A/X/Y 分别启动 CXK、SONIC06、SONIC11，RB＋X 可主动返回 normal。
-键盘仍以 C、D/F/G、N 对应同一协议。
-使用配套 eval 0.4.0 记录三组角度、温度和故障，完成/中止与精度初筛分开报告。
-仿真自动连测保留为可选模式，硬件只接受人工模式；当前源码修改位于本任务副本。
+本任务新增[独立模型执行一致性测试](src/bxi_example_py_elf3/mods/com.bxi.execution_suite/HARDWARE.zh-CN.md)：
+测试者先进入已有 `forward_back` 走路模式，再用普通遥控器配置逐个启动 CXK、SONIC06、SONIC11。
+它不加入原悬挂 B 流程、不修改 `com.bxi.suspended_tests`，每个动作完成后自动回 `normal`。
+日志写入既有 `test_*_elf.log`，精度由 `q_actual - q_model` 的 MAE、RMSE、P95 和最大误差筛查。
 
 另有独立[舞蹈模型执行测试接口](src/bxi_example_py_elf3/mods/com.bxi.dance_test/README.zh-CN.md)，
 它的旧默认映射用于未启用套件的模式；统一测试请使用上面的六步流程。

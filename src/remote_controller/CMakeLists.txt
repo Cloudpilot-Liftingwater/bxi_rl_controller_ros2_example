@@ -81,22 +81,6 @@ if(BUILD_TESTING)
     NAME ${PROJECT_NAME}_control_rules_test
     COMMAND ${PROJECT_NAME}_control_rules_test
   )
-  add_executable(${PROJECT_NAME}_execution_suite_gamepad_test
-    test/execution_suite_gamepad_test.cpp
-  )
-  ament_target_dependencies(${PROJECT_NAME}_execution_suite_gamepad_test communication)
-  target_link_libraries(${PROJECT_NAME}_execution_suite_gamepad_test ${PROJECT_NAME}_core)
-  add_test(
-    NAME ${PROJECT_NAME}_execution_suite_gamepad_test
-    COMMAND ${PROJECT_NAME}_execution_suite_gamepad_test
-      ${CMAKE_CURRENT_SOURCE_DIR}/config/xbox_default.yaml
-  )
-  add_executable(${PROJECT_NAME}_confirmed_gamepad_test test/confirmed_gamepad_test.cpp)
-  ament_target_dependencies(${PROJECT_NAME}_confirmed_gamepad_test communication)
-  target_link_libraries(${PROJECT_NAME}_confirmed_gamepad_test ${PROJECT_NAME}_core)
-  add_test(NAME ${PROJECT_NAME}_confirmed_gamepad_test
-    COMMAND ${PROJECT_NAME}_confirmed_gamepad_test
-      ${CMAKE_CURRENT_SOURCE_DIR}/config/execution_suite_gamepad.yaml)
 endif()
 
 add_executable(${PROJECT_NAME}

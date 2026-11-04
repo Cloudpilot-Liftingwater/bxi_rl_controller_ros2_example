@@ -817,19 +817,6 @@ void load_bindings(const YAML::Node &node, RemoteConfig &config, const std::stri
         binding.mode = mode;
         binding.when = load_condition(
             item["when"], config, "outputs." + mode + "[].when");
-        binding.bypass_rearm = get_or<bool>(item, "bypass_rearm", false);
-        if (binding.bypass_rearm && mode != "level") {
-            throw std::runtime_error("bypass_rearm is only supported for level outputs");
-        }
-        if (mode == "gesture") {
-            binding.hold_ms = get_or<int>(item, "hold_ms", 500);
-            binding.on_release = get_or<bool>(item, "on_release", false);
-            binding.interrupt = get_or<bool>(item, "interrupt", false);
-            if (binding.hold_ms < 0 || binding.hold_ms > 10000 ||
-                (binding.on_release && binding.interrupt)) {
-                throw std::runtime_error("gesture hold_ms must be 0..10000; release cannot interrupt");
-            }
-        }
         if (binding.output.empty()) {
             throw std::runtime_error("binding must contain output and when");
         }
@@ -846,7 +833,6 @@ void load_outputs(const YAML::Node &node, RemoteConfig &config)
         "analog",
         "level",
         "edge",
-        "gestures",
     };
     for (const auto &item : node) {
         const std::string key = item.first.as<std::string>();
@@ -870,17 +856,6 @@ void load_outputs(const YAML::Node &node, RemoteConfig &config)
     load_analog_outputs(node["analog"], config, "outputs.analog");
     load_bindings(node["level"], config, "level");
     load_bindings(node["edge"], config, "edge");
-    if (node["gestures"]) {
-        const auto group = node["gestures"];
-        require_map(group, "outputs.gestures");
-        config.gestures.enabled = true;
-        config.gestures.neutral = load_condition(group["neutral"], config, "outputs.gestures.neutral");
-        config.gestures.cancel_when = load_condition(group["cancel_when"], config, "outputs.gestures.cancel_when");
-        load_bindings(group["bindings"], config, "gesture");
-        if (!group["bindings"] || group["bindings"].size() == 0) {
-            throw std::runtime_error("outputs.gestures.bindings must not be empty");
-        }
-    }
 }
 
 void load_system_commands(const YAML::Node &node, RemoteConfig &config)
@@ -1219,8 +1194,8 @@ void validate_config(RemoteConfig &config)
     std::map<int, std::set<int>> level_values_by_slot;
     std::map<int, std::set<int>> edge_values_by_slot;
     for (const auto &binding : config.bindings) {
-        if (binding.mode != "level" && binding.mode != "edge" && binding.mode != "gesture") {
-            throw std::runtime_error("binding mode must be level, edge or gesture");
+        if (binding.mode != "level" && binding.mode != "edge") {
+            throw std::runtime_error("binding mode must be level or edge");
         }
         if (binding.mode == "level") {
             int slot = 0;
@@ -1235,10 +1210,6 @@ void validate_config(RemoteConfig &config)
         } else {
             int slot = 0;
             int value = 0;
-            if (binding.mode == "gesture" &&
-                (!parse_btn_output(binding.output, slot, value) || value <= 0)) {
-                throw std::runtime_error("gesture target must be a positive MotionCommands button value");
-            }
             if (parse_btn_output(binding.output, slot, value)) {
                 edge_values_by_slot[slot].insert(value);
             } else if (!starts_with(binding.output, "system.")) {
@@ -1258,18 +1229,6 @@ void validate_config(RemoteConfig &config)
             if (control_names.count(control) == 0) {
                 throw std::runtime_error(
                     "binding " + binding.output + " references unknown control: " + control);
-            }
-        }
-    }
-    if (config.gestures.enabled) {
-        for (const auto &condition : {config.gestures.neutral, config.gestures.cancel_when}) {
-            std::set<std::string> references;
-            collect_condition_references(condition, references, used_raw_sources);
-            for (const auto &control : references) {
-                if (control_names.count(control) == 0) {
-                    throw std::runtime_error("gesture group references unknown control: " + control);
-                }
-                used_controls.insert(control);
             }
         }
     }

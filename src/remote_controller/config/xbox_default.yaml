@@ -129,14 +129,6 @@ outputs:
       when: [shoulder.right_event]
     - output: btn_8=3
       when: [button.b_event]
-    # RT+face can otherwise look neutral if LB is released first. Keep the
-    # release marker until the face is up or its legacy output becomes visible.
-    - output: btn_8=3
-      when: [trigger.right_event, button.a_event]
-    - output: btn_8=3
-      when: [trigger.right_event, button.x_event]
-    - output: btn_8=3
-      when: [trigger.right_event, button.y_event]
     # Both shoulders + X toggles the forward/back mode from normal.
     - output: btn_5=1
       when: [shoulder.left_event, shoulder.right_event, button.x_event]
@@ -151,35 +143,25 @@ outputs:
       when: [shoulder.right_event, button.b_event, {released: shoulder.left_event}]
     - output: btn_4=1
       when: [shoulder.right_event, button.y_event, {released: shoulder.left_event}]
-    # 独立走路模式中的模型一致性测试快捷键：
-    # LB+RT+A -> btn_6=3 -> CXK；LB+RT+X -> btn_6=4 -> SONIC 06；
-    # LB+RT+Y -> btn_6=5 -> SONIC 11。每次只触发一个动作。
-    # Execution suite: hold LB + RT, then one face button. RB stays released.
-    # Keep RB+X (normal) and both-shoulders+B (zero torque) available above.
-    # The suite's remote filter waits for neutral after each request, so
-    # releasing RT/LB first cannot turn a model request into a legacy action.
-    - output: btn_9=3
-      when: [shoulder.left_event, trigger.right_event, button.b_event, {released: shoulder.right_event}, {released: button.a_event}, {released: button.x_event}, {released: button.y_event}]
+    - output: btn_6=1
+      when: [shoulder.left_event, button.a_event, {released: shoulder.right_event}, {released: trigger.right_event}]
+    # Standalone walking-mode model consistency checks; one action per press.
+    # LB+RT+A -> CXK, LB+RT+X -> SONIC 06, LB+RT+Y -> SONIC 11.
     - output: btn_6=3
       when: [shoulder.left_event, trigger.right_event, button.a_event, {released: shoulder.right_event}, {released: button.b_event}, {released: button.x_event}, {released: button.y_event}]
     - output: btn_6=4
       when: [shoulder.left_event, trigger.right_event, button.x_event, {released: shoulder.right_event}, {released: button.a_event}, {released: button.b_event}, {released: button.y_event}]
     - output: btn_6=5
       when: [shoulder.left_event, trigger.right_event, button.y_event, {released: shoulder.right_event}, {released: button.a_event}, {released: button.b_event}, {released: button.x_event}]
-    - output: btn_6=1
-      when: [shoulder.left_event, button.a_event, {released: shoulder.right_event}, {released: trigger.right_event}]
-    # LB+X toggles the separate dance test; does not alter suspended A/B/X/Y.
-    - output: btn_6=2
-      when: [shoulder.left_event, button.x_event, {released: shoulder.right_event}, {released: trigger.right_event}]
     # X/Y/A/B are exclusive test commands only without either shoulder held.
     - output: btn_9=2
-      when: [button.b_event, {released: shoulder.left_event}, {released: shoulder.right_event}, {released: trigger.right_event}]
+      when: [button.b_event, {released: shoulder.left_event}, {released: shoulder.right_event}]
     - output: btn_9=1
-      when: [button.x_event, {released: shoulder.left_event}, {released: shoulder.right_event}, {released: trigger.right_event}]
+      when: [button.x_event, {released: shoulder.left_event}, {released: shoulder.right_event}]
     - output: btn_10=1
-      when: [button.y_event, {released: shoulder.left_event}, {released: shoulder.right_event}, {released: trigger.right_event}]
+      when: [button.y_event, {released: shoulder.left_event}, {released: shoulder.right_event}]
     - output: btn_7=1
-      when: [button.a_event, {released: shoulder.left_event}, {released: shoulder.right_event}, {released: trigger.right_event}]
+      when: [button.a_event, {released: shoulder.left_event}, {released: shoulder.right_event}]
 
 system:
   start:

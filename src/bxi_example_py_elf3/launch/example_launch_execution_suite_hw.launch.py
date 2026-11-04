@@ -1,4 +1,4 @@
-"""Unified manual hardware tests, reusing the original hardware launcher.
+"""Standalone model consistency test wrapper, reusing the original hardware launcher.
 
 The gamepad profile is shared byte for byte with sim2sim. Hardware reset,
 IMU selection and process exclusion remain owned by example_demo_hw.
@@ -57,10 +57,10 @@ def _suite_actions(context):
     )
     gamepad = Node(
         package="remote_controller", executable="remote_controller",
-        name="execution_suite_gamepad", output="screen", emulate_tty=True,
+        name="remote_controller", output="screen", emulate_tty=True,
         condition=IfCondition(LaunchConfiguration("start_remote_controller")),
-        arguments=["--driver", "joystick", "--disable-system-actions", "--config",
-                   str(get_package_share_path("remote_controller") / "config/execution_suite_gamepad.yaml")],
+        arguments=["--driver", "joystick", "--config",
+                   str(get_package_share_path("remote_controller") / "config/xbox_default.yaml")],
     )
     return [original, gamepad]
 

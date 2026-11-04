@@ -18,22 +18,23 @@ events:
   sonic06: {slot: btn_6, value: 4}
   sonic11: {slot: btn_6, value: 5}
 states:
-  ground_prepare: {manifest: {label: 全套测试-落地准备, group: Tests}}
   dance: {manifest: {label: 全套测试-CXK load2, group: Tests}}
   sonic06: {manifest: {label: 全套测试-SONIC 06, group: Tests}}
   sonic11: {manifest: {label: 全套测试-SONIC 11, group: Tests}}
 routes:
-  - {from: com.bxi.basic_actions/pd_brake, event: com.bxi.suspended_tests/exit_test_mode, to: com.bxi.basic_actions/zero_torque}
   - {from: com.bxi.basic_actions/normal, event: dance, to: dance, transition: {type: execution_suite_cxk_entry, duration: 2.0, curve: smootherstep, sample_from: true, sample_to: true, advance_from: true, advance_to: false}}
   - {from: com.bxi.basic_actions/normal, event: sonic06, to: sonic06, transition: {type: execution_suite_model_entry, duration: 2.0, curve: smootherstep, sample_from: true, sample_to: true, advance_from: true, advance_to: false}}
   - {from: com.bxi.basic_actions/normal, event: sonic11, to: sonic11, transition: {type: execution_suite_model_entry, duration: 2.0, curve: smootherstep, sample_from: true, sample_to: true, advance_from: true, advance_to: false}}
+  - {from: com.bxi.basic_actions/forward_back, event: dance, to: dance, transition: {type: execution_suite_cxk_entry, duration: 2.0, curve: smootherstep, sample_from: true, sample_to: true, advance_from: true, advance_to: false}}
+  - {from: com.bxi.basic_actions/forward_back, event: sonic06, to: sonic06, transition: {type: execution_suite_model_entry, duration: 2.0, curve: smootherstep, sample_from: true, sample_to: true, advance_from: true, advance_to: false}}
+  - {from: com.bxi.basic_actions/forward_back, event: sonic11, to: sonic11, transition: {type: execution_suite_model_entry, duration: 2.0, curve: smootherstep, sample_from: true, sample_to: true, advance_from: true, advance_to: false}}
   # A normal self-route cancels pending resource loads and entry blends too.
   - {from: com.bxi.basic_actions/normal, event: com.bxi.basic_actions/normal, to: com.bxi.basic_actions/normal}
-  - {from: ground_prepare, event: com.bxi.suspended_tests/exit_test_mode, to: com.bxi.basic_actions/zero_torque}
   - {from: dance, event: com.bxi.suspended_tests/exit_test_mode, to: com.bxi.basic_actions/zero_torque}
   - {from: sonic06, event: com.bxi.suspended_tests/exit_test_mode, to: com.bxi.basic_actions/zero_torque}
   - {from: sonic11, event: com.bxi.suspended_tests/exit_test_mode, to: com.bxi.basic_actions/zero_torque}
   - {from: com.bxi.basic_actions/normal, event: com.bxi.suspended_tests/exit_test_mode, to: com.bxi.basic_actions/zero_torque}
+  - {from: com.bxi.basic_actions/forward_back, event: com.bxi.suspended_tests/exit_test_mode, to: com.bxi.basic_actions/zero_torque}
 actions:
   - {from: dance, event: com.bxi.basic_actions/normal, action: cancel, manifest: {label: 中止CXK并返回normal}}
   - {from: sonic06, event: com.bxi.basic_actions/normal, action: cancel, manifest: {label: 中止SONIC06并返回normal}}

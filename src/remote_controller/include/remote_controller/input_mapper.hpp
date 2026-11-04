@@ -1,7 +1,6 @@
 #pragma once
 
 #include <chrono>
-#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -16,9 +15,7 @@ namespace remote_controller {
 
 class InputMapper {
 public:
-    using GestureClock = std::function<std::chrono::steady_clock::time_point()>;
-    explicit InputMapper(RemoteConfig config,
-        GestureClock gesture_clock = std::chrono::steady_clock::now);
+    explicit InputMapper(RemoteConfig config);
 
     const RemoteConfig &config() const;
 
@@ -74,19 +71,6 @@ private:
     int edge_pulse_slots_[kButtonSlotCount + 1] = {0};
     int last_logged_output_slots_[kButtonSlotCount + 1] = {0};
     double height_filtered_ = kStandHeight;
-    GestureClock gesture_clock_;
-    bool gesture_armed_ = false;
-    bool gesture_active_ = false;
-    bool gesture_consumed_ = false;
-    bool gesture_release_valid_ = false;
-    bool gesture_interrupt_fired_ = false;
-    int gesture_release_index_ = -1;
-    int gesture_hold_index_ = -1;
-    std::chrono::steady_clock::time_point gesture_started_{};
-    std::chrono::steady_clock::time_point gesture_hold_started_{};
-
-    void reset_gestures();
-    void refresh_gestures(bool emit_edges);
 
     std::vector<std::string> refresh_bindings(bool emit_edges = true);
     void log_button_output_changes();
