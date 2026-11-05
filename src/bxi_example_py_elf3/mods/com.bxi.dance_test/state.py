@@ -1,0 +1,175 @@
+"""One playback per entry. Completion and accuracy acceptance are separate."""
+import time
+
+import numpy as np
+
+from bxi_example_py_elf3.control.elf3 import JOINT_NAMES, JOINT_POSITION_MIN, JOINT_POSITION_MAX
+from bxi_example_py_elf3.framework.execution_observer import observe, log_message
+from bxi_example_py_elf3.framework.mod_api import MotionReplayState
+from bxi_example_py_elf3.model_test_safety import diagnostic
+from bxi_example_py_elf3.model_test_accuracy import TrackingRun
+from bxi_example_py_elf3.framework.execution_observer import add_command_listener, remove_command_listener
+
+NORMAL = "com.bxi.basic_actions/normal"
+ZERO = "com.bxi.basic_actions/zero_torque"
+EXIT_BLEND = dict(type="running_blend", duration=1.0, curve="smootherstep",
+                  sample_from=True, sample_to=True, advance_from=False, advance_to=True)
+RETURN_NORMAL_BLEND = dict(type="running_blend", duration=0.1, curve="smootherstep",
+                           sample_from=False, sample_to=True, advance_from=False, advance_to=True)
+
+
+class DanceTestState(MotionReplayState):
+    def __init__(self, name, state_id, policy, *, temperature_guard=None):
+        super().__init__(name, state_id, policy, finish_state=NORMAL,
+                         finish_trigger="dance_playback_complete", end_transition=EXIT_BLEND)
+        self.result = "not_started"
+        self._last_stamp = None
+        self._last_feedback_at = 0.0
+        self.temperature_guard = temperature_guard
+        self._thermal_notice_sent = False
+        self._accuracy = None
+
+    def _mark(self, status, reason="", **details):
+        severity = "error" if status == "failed" else "warning" if status in ("cancelled", "interrupted") else "info"
+        code = ' ['+details['code']+']' if details.get('code') else ''
+        log_message(self.logger, severity, f"MODEL_TEST {self.name}{code} {status}: {reason}")
+        observe("test_event", self.name, status, reason, severity=severity, **details)
+
+    def on_prepare(self, ctx, from_state):
+        self.result = "preparing"
+        self._last_stamp = ctx.robot_joints.timestamp_ns
+        self._last_feedback_at = time.monotonic()
+        self._thermal_notice_sent = False
+        super().on_prepare(ctx, from_state)
+
+    def on_prepare_cancel(self, ctx, from_state):
+        if self.result == "preparing":
+            self.result = "cancelled"
+            self._mark("cancelled", "entry cancelled before playback", code="ENTRY_CANCELLED", category="operator")
+
+    def on_enter(self, ctx):
+        super().on_enter(ctx)
+        self.result = "running"
+        self._last_stamp = ctx.robot_joints.timestamp_ns
+        self._last_feedback_at = time.monotonic()
+        self._accuracy = TrackingRun(self.name, getattr(ctx, "dt", .02), self.logger)
+        add_command_listener(self._accuracy)
+        self._mark("started")
+        if (self.policy.asset_info.get("source_type") != "smpl"
+                and not self.policy.asset_info.get("motion_names_observed", False)):
+            self.logger.warning("dance NPZ has no joint_names; order follows existing policy/model contract")
+
+    def _fail(self, ctx, reason, *, code=None, category=None, details=None):
+        if self.result == "failed":
+            return
+        self.result = "failed"
+        inferred_code, inferred_category = diagnostic(reason)
+        self._mark("failed", reason, code=code or inferred_code,
+                   category=category or inferred_category, details=details or {})
+        self._finish_accuracy(False)
+        # Preserve unavailable-feedback/orientation protections; normal needs
+        # a usable observation. A valid-observation model/thermal/accuracy
+        # failure returns to normal without continuing the failed action.
+        unsafe = ctx.is_orientation_unsafe(ctx.current_quat_xyzw)
+        target = ZERO if unsafe or (category or inferred_category) in ("feedback", "sensor") else NORMAL
+        ctx.request_state(target, trigger="dance_safety_fault", force=True,
+                          transition=RETURN_NORMAL_BLEND if target == NORMAL else None)
+
+    def _check_safety(self, ctx):
+        now = time.monotonic()
+        if ctx.robot_joints.timestamp_ns != self._last_stamp:
+            self._last_stamp = ctx.robot_joints.timestamp_ns
+            self._last_feedback_at = now
+        if now - self._last_feedback_at > 0.2:
+            raise ValueError("joint feedback stale for more than 0.2 s")
+        measured = [ctx.robot_joints.position[ctx.robot_layout.index(n)] for n in JOINT_NAMES]
+        if not np.isfinite(measured).all():
+            raise ValueError("joint feedback contains non-finite angles")
+        if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):
+            raise ValueError("unsafe orientation")
+        if self.temperature_guard is not None:
+            fault = self.temperature_guard.check(ctx)
+            if fault is not None:
+                self._fail(ctx, **fault)
+                raise ValueError(fault["reason"])
+            if (not self._thermal_notice_sent
+                    and getattr(ctx.ros_node, "topic_prefix", "") == "simulation/"):
+                self._thermal_notice_sent = True
+                self._mark("not_assessed", "thermal: MuJoCo has no motor thermal model",
+                           code="THERMAL_NOT_SIMULATED", category="temperature")
+
+    def sample_running_frame(self, ctx, dt, *, advance):
+        try:
+            self._check_safety(ctx)
+            frame = super().sample_running_frame(ctx, dt, advance=advance)
+            return self._validate_frame(frame)
+        except Exception as exc:
+            # Preview calls also occur inside entry/exit transitions, outside
+            # on_update. Never return an invalid frame to a blend/publisher.
+            self._fail(ctx, str(exc))
+            raise
+
+    def _validate_frame(self, frame):
+        names = frame.layout.names
+        if len(names) != 29 or set(names) != set(JOINT_NAMES):
+            raise ValueError("dance target lacks the complete named body29")
+        indices = [JOINT_NAMES.index(n) for n in names]
+        if not all(np.isfinite(a).all() for a in (frame.qpos, frame.kp, frame.kd)):
+            raise ValueError("nonfinite dance target/gains")
+        if np.any(frame.kp < 0) or np.any(frame.kd < 0):
+            raise ValueError("negative dance gains")
+        if np.any(frame.qpos < JOINT_POSITION_MIN[indices]) or np.any(frame.qpos > JOINT_POSITION_MAX[indices]):
+            raise ValueError("dance target exceeds software joint limits")
+        return frame
+
+    def _finish_accuracy(self, completed):
+        if self._accuracy is not None:
+            remove_command_listener(self._accuracy)
+            self._accuracy.finish(completed)
+
+    def on_update(self, ctx, dt):
+        if self.result != "running":
+            return
+        if self._accuracy is not None:
+            self._accuracy.sample(ctx.robot_joints)
+            if self._accuracy.fault is not None:
+                detail = self._accuracy.fault
+                self._fail(ctx, f"{detail['joint']} tracking error {detail['observed_deg']:.2f}deg "
+                           f"exceeds {detail['limit_deg']:.1f}deg", code="TRACKING_ERROR",
+                           category="tracking", details=detail)
+                return
+        try:
+            frame = self.sample_running_frame(ctx, dt, advance=True)
+        except Exception as exc:
+            self._fail(ctx, str(exc))
+            return
+        if self.result != "running":
+            return
+        self._apply_frame(ctx, frame)
+        if self._accuracy is not None:
+            inner = getattr(self.policy, "inner", None)
+            self._accuracy.stage(frame, blend=bool(getattr(inner, "source_blend_active", False)))
+        if self.policy.finished():
+            # A complete cursor says nothing about measured precision.
+            self.result = "playback_complete"
+            self._mark(self.result, "final motion frame consumed")
+            self._finish_accuracy(True)
+            if ctx.request_state(NORMAL, trigger=self.finish_trigger, transition=EXIT_BLEND) is False:
+                self._fail(ctx, "normal return state unavailable")
+
+    def on_action(self, ctx, action_name):
+        if action_name != "cancel":
+            return False
+        if self.result != "playback_complete":
+            self.result = "cancelled"
+            self._mark("cancelled", "operator requested normal", code="OPERATOR_RETURN_NORMAL", category="operator")
+            self._finish_accuracy(False)
+        if ctx.request_state(NORMAL, trigger="operator_return_normal", transition=RETURN_NORMAL_BLEND) is False:
+            self._fail(ctx, "normal return state unavailable")
+        return True
+
+    def on_exit(self, ctx):
+        self._finish_accuracy(self.result == "playback_complete")
+        if self.result == "running":
+            self.result = "interrupted"
+            self._mark("interrupted", "state changed before final motion frame")

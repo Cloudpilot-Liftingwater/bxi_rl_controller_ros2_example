@@ -1,0 +1,20 @@
+[
+  {
+    "id": "06",
+    "name": "dance_hiphop_roof_top_slides_R_001__A313.pkl",
+    "frames": 281,
+    "fps": 50,
+    "source_smpl_sha256": "3866d06807efd0ab7a7593ba701b542fb0a8b180a6b0cd97d85df01bb33a1bec",
+    "reference_sha256": "08fcddcbf991be1a9da33d2bf205db379b5e2bcc86e38d9f8a489f432bd157e3",
+    "conversion": "existing numpy_smpl + exact current PICO wrist mapping; see sonic_dance_rollout.py"
+  },
+  {
+    "id": "11",
+    "name": "dance_i_aint_afraid_002__A467.pkl",
+    "frames": 435,
+    "fps": 50,
+    "source_smpl_sha256": "1904ee6a8144303ea7967d36de898e5035c420209aa3c5d9b0627df034e4e283",
+    "reference_sha256": "f3ae34721396c99b93a666c785c1a7446f2371fcc5bbb0ff2f918c17cc2928ce",
+    "conversion": "existing numpy_smpl + exact current PICO wrist mapping; see sonic_dance_rollout.py"
+  }
+]

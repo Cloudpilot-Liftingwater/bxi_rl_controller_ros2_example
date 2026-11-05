@@ -15,6 +15,7 @@ from typing import Callable
 from rclpy.logging import get_logger
 
 from bxi_example_py_elf3.framework.joints import JointCommandDefaults
+from bxi_example_py_elf3.framework.execution_observer import observe
 from bxi_example_py_elf3.framework.mod_api import TransitionSpec
 
 from bxi_example_py_elf3.framework.runtime.control_scheduler import (
@@ -544,6 +545,13 @@ class RobotControlRuntime:
             f"启动以来累计异常{summary['latest_count']}次。",
         )
         if logged:
+            observe('test_event',str(summary['state']),'warning','control scheduler wake/deadline warning',
+                    severity='warning',code='CONTROL_TIMING',category='timing',
+                    details={'events':int(summary['events']),'wake_events':wake_events,'finish_events':finish_events,
+                             'max_wake_late_ms':float(summary['max_wake_late_ms']),
+                             'max_cycle_ms':float(summary['max_cycle_ms']),
+                             'max_finish_late_ms':float(summary['max_finish_late_ms']),
+                             'wake_tolerance_ms':tolerance_ms,'compute_budget_ms':budget_ms,'period_ms':period_ms})
             self._pending_deadline_summary = None
             self._last_deadline_warning_at = now
 

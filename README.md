@@ -19,6 +19,17 @@ The binary ROS2 packages of ROS2 environment and mujoco can be find here:[`bxi_r
 4. `src/bix_example_py_arm`: a demo of upper body control.     
 
 ## Usage
+
+本任务新增[独立模型执行一致性测试](src/bxi_example_py_elf3/mods/com.bxi.execution_suite/HARDWARE.zh-CN.md)：
+测试者先进入已有 `forward_back` 走路模式，再复用官方遥控器配置的预留按键逐个启动 CXK、SONIC06、SONIC11。
+它不加入原悬挂 B 流程、不修改 `com.bxi.suspended_tests`，每个动作完成后自动回 `normal`。
+日志写入既有 `*_elf.log`，精度由 `q_actual - q_model` 的 MAE、RMSE、P95 和最大误差筛查。
+
+另有独立[舞蹈模型执行测试接口](src/bxi_example_py_elf3/mods/com.bxi.dance_test/README.zh-CN.md)，
+它的旧默认映射用于未启用套件的模式；统一测试请使用上面的六步流程。
+播放完成回 normal；用配套 elf3-model-execution-eval 0.4.0
+旁路记录真实解码目标与反馈，计算 `q_actual - q_model`。部署前须验证实际配套舞蹈资产及仿真。
+
 ### Descripiton Files
 1. `elf2-trunk`:Elf2 v1，`base link` is `trunk`(torso)，elf2-trunk_dof12: only 12 leg joints are free joints. dof25: all joints are free.
 2. `elf2-ankle`:Elf2 v2: ankles torques are increased `50Nm`.
