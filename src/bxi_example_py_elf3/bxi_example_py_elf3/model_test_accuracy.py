@@ -31,6 +31,7 @@ class TrackingRun:
         self.covered_s = 0.0
         self.issues = set()
         self.observer_failed = False
+        self.stop_on_maximum = True
         self.fault = None
         self.worker = None
         self.report = None
@@ -89,6 +90,8 @@ class TrackingRun:
         previous = getattr(self, "_paired_stamp", stamp)
         self.covered_s += min(max((stamp - previous) / 1e9, 0.0), self.period)
         self._paired_stamp = stamp
+        if not self.stop_on_maximum:
+            return
         bad = np.flatnonzero(np.abs(error) > self.limits["maximum"])
         if bad.size:
             i = int(bad[np.argmax(np.abs(error[bad]))])

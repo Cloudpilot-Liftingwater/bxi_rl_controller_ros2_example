@@ -35,14 +35,16 @@ def summarize(run, completed=True):
     return run.report
 
 
-@pytest.mark.parametrize('degrees,status', [(2.,'PASS'),(4.,'FAIL')])
+@pytest.mark.parametrize('degrees,status', [(2.,'PASS'),(4.,'FAIL'),(25.,'FAIL')])
 def test_known_error_and_all_29_named_joints(degrees,status):
     run=TrackingRun('test/dance',.02,Logger())
+    run.stop_on_maximum=False
     for i in range(160):
         t=100+i*.02
         publish(run,t, q=t)
         run.sample(feedback(t+.01,t+np.radians(degrees)))
     report=summarize(run)
+    assert run.fault is None
     assert report['status']==status and report['coverage']>=.95
     assert report['independent_targets']==160
     for row in report['joints'].values():

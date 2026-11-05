@@ -14,6 +14,7 @@ from bxi_example_py_elf3.model_test_safety import ModelTemperatureGuard
 from bxi_example_py_elf3.policies.joints import ELF3_POLICY_JOINTS
 from test_dance_execution import Logger, context
 from test_execution_suite import module
+from test_model_accuracy import publish
 
 ROOT=Path(__file__).resolve().parents[1]
 NORMAL='com.bxi.basic_actions/normal'
@@ -180,6 +181,26 @@ def test_each_completed_clip_waits_for_operator_and_can_be_repeated(monkeypatch)
         assert sm.current_state_name==NORMAL and not sm.in_transition
         for _ in range(50):tick()
         assert sm.current_state_name==NORMAL
+
+
+@pytest.mark.parametrize('topic,expected', [('simulation/','running'),('hardware/','failed')])
+def test_sim2sim_records_overlimit_sample_while_hardware_stops(monkeypatch,topic,expected):
+    _,_,states,ctx,frames,requests=setup_suite(monkeypatch,topic)
+    state=states['dance']
+    state.on_enter(ctx)
+    try:
+        publish(state._accuracy,1.,q=np.radians(25.))
+        ctx.robot_joints.timestamp_ns=1_010_000_000
+        state.on_update(ctx,.02)
+        assert state.result==expected
+        assert state._accuracy.samples==1
+        assert np.max(np.abs(state._accuracy.errors[0]))==pytest.approx(25.)
+        if topic=='hardware/':
+            assert not frames and requests[-1][1]['trigger']=='dance_safety_fault'
+        else:
+            assert frames and not requests
+    finally:
+        state.on_exit(ctx)
 
 
 def test_normal_shortens_exit_blend_without_reclassifying_completion(monkeypatch):
