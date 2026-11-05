@@ -16,6 +16,7 @@ _ESCAPES = frozenset({
 })
 _SUITE = "com.bxi.execution_suite/"
 _MODELS = frozenset(_SUITE + stage for stage in ("dance", "sonic06", "sonic11"))
+_MODEL_OUTPUTS = frozenset((19, 21, 22))
 
 
 def allowed_test_events(state):
@@ -49,7 +50,7 @@ class SuiteRemoteGuard:
             self._awaiting_release = False
             return list(events)
 
-        suite_request = int(getattr(message, "btn_6", 0)) in (3, 4, 5)
+        suite_request = int(getattr(message, "btn_10", 0)) in _MODEL_OUTPUTS
         # Leave ordinary official controls alone outside suite requests/states.
         if not (self._isolate or self._awaiting_release or suite_request
                 or current_state.startswith("com.bxi.execution_suite/")

@@ -21,9 +21,9 @@ The binary ROS2 packages of ROS2 environment and mujoco can be find here:[`bxi_r
 ## Usage
 
 本任务新增[独立模型执行一致性测试](src/bxi_example_py_elf3/mods/com.bxi.execution_suite/HARDWARE.zh-CN.md)：
-测试者先进入已有 `forward_back` 走路模式，再用普通遥控器配置逐个启动 CXK、SONIC06、SONIC11。
+测试者先进入已有 `forward_back` 走路模式，再复用官方遥控器配置的预留按键逐个启动 CXK、SONIC06、SONIC11。
 它不加入原悬挂 B 流程、不修改 `com.bxi.suspended_tests`，每个动作完成后自动回 `normal`。
-日志写入既有 `test_*_elf.log`，精度由 `q_actual - q_model` 的 MAE、RMSE、P95 和最大误差筛查。
+日志写入既有 `*_elf.log`，精度由 `q_actual - q_model` 的 MAE、RMSE、P95 和最大误差筛查。
 
 另有独立[舞蹈模型执行测试接口](src/bxi_example_py_elf3/mods/com.bxi.dance_test/README.zh-CN.md)，
 它的旧默认映射用于未启用套件的模式；统一测试请使用上面的六步流程。

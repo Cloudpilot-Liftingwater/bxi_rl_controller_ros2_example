@@ -102,7 +102,7 @@ def generate_launch_description():
                 "execution_suite",
                 default_value=EnvironmentVariable("BXI_EXECUTION_SUITE", default_value="0"),
                 choices=["0", "1"],
-                description="Select the unified suspended/CXK/SONIC manual test workflow",
+                description="Preload standalone CXK/SONIC model-test resources",
             ),
             DeclareLaunchArgument(
                 "sonic_root",
@@ -114,7 +114,9 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "execution_eval",
-                default_value=EnvironmentVariable("ELF3_EVAL_ENABLE", default_value="0"),
+                # Preserve observation with the unmodified upstream remote
+                # start command; operators can explicitly disable it with 0.
+                default_value=EnvironmentVariable("ELF3_EVAL_ENABLE", default_value="1"),
                 choices=["0", "1"],
                 description="Enable passive model-target observation in the controller",
             ),

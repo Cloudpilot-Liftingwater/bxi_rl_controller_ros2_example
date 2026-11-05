@@ -29,11 +29,12 @@ def probe(tmp_path_factory):
          '-lyaml-cpp','-o',str(out)]
     result=subprocess.run(cmd,capture_output=True,text=True)
     assert result.returncode==0,result.stderr
-    def read(snapshots):
-        result=subprocess.run([str(out),str(REMOTE/'config/xbox_default.yaml')],
-            input='\n'.join(' '.join(str(int(k in snapshot)) for k in ('lb','rb','rt','a','b','x','y','view'))
+    def read(snapshots,backend='gamepad'):
+        result=subprocess.run([str(out),str(REMOTE/'config/xbox_default.yaml'),backend],
+            input='\n'.join(' '.join(str(int(k in snapshot)) for k in ('lb','rb','rt','a','b','x','y','back','lt'))
                             for snapshot in snapshots)+'\n',check=True,capture_output=True,text=True)
-        return [NS(**{f'btn_{i+1}':int(v) for i,v in enumerate(line.split()[1:])})
+        return [NS(**{f'btn_{i+1}':int(v) for i,v in enumerate(line.split()[1:11])},
+                   system_actions=line.split()[11:])
                 for line in result.stdout.splitlines() if line.startswith('MSG ')]
     return read
 
@@ -47,7 +48,8 @@ def adapter():
 
 
 @pytest.mark.parametrize('face,stage',[('a','dance'),('x','sonic06'),('y','sonic11')])
-def test_all_native_press_release_orders_select_once_and_never_trigger_release_actions(probe,face,stage):
+@pytest.mark.parametrize('backend',['gamepad','crsf'])
+def test_all_native_press_release_orders_select_once_and_never_trigger_release_actions(probe,face,stage,backend):
     for press in permutations(('lb','rt',face)):
         for release in permutations(('lb','rt',face)):
             snapshots=[set()]; held=set()
@@ -57,7 +59,7 @@ def test_all_native_press_release_orders_select_once_and_never_trigger_release_a
                 held.remove(key);snapshots.append(set(held))
             guard=module('mods/com.bxi.execution_suite/remote_guard.py','native_guard').SuiteRemoteGuard()
             a=adapter(); selected=[];requested=False
-            for msg in probe(snapshots):
+            for msg in probe(snapshots,backend):
                 # Include the case where a short motion finished before the
                 # initiating keys were released: guard must protect normal.
                 events=guard(msg,a.extract_events(msg),NORMAL)
@@ -71,13 +73,14 @@ def test_all_native_press_release_orders_select_once_and_never_trigger_release_a
 @pytest.mark.parametrize('stage',['dance','sonic06','sonic11'])
 @pytest.mark.parametrize('phase',['entry','active','exit'])
 @pytest.mark.parametrize('escape',['normal','zero'])
-def test_native_escape_reaches_actual_normal_or_zero_frame(monkeypatch,probe,stage,phase,escape):
+@pytest.mark.parametrize('backend',['gamepad','crsf'])
+def test_native_escape_reaches_actual_normal_or_zero_frame(monkeypatch,probe,stage,phase,escape,backend):
     sm,states,ctx,frames,tick=machine(monkeypatch,include_zero=True)
     tick(PREFIX+stage)
     reach_motion_phase(sm,states,tick,stage,phase)
     a=adapter();guard=module('mods/com.bxi.execution_suite/remote_guard.py','escape_guard').SuiteRemoteGuard()
-    buttons={'rb','x'} if escape=='normal' else {'view'}
-    for msg in probe([set(),buttons,set()]):
+    buttons={'rb','x'} if escape=='normal' else {'rb','a'}
+    for msg in probe([set(),buttons,set()],backend):
         for event in guard(msg,a.extract_events(msg),sm.current_state_name):
             tick(event)
     for _ in range(8):tick()
@@ -87,12 +90,49 @@ def test_native_escape_reaches_actual_normal_or_zero_frame(monkeypatch,probe,sta
         assert np.all(frames[-1].torque==0)
 
 
-def test_suspended_commands_keep_original_mapping_and_view_exit(probe):
-    for key,field,value in [('a','btn_7',1),('b','btn_9',2),('x','btn_9',1),('y','btn_10',1)]:
-        msg=probe([set(),{key}])[-1]
+@pytest.mark.parametrize('backend',['gamepad','crsf'])
+def test_suspended_commands_keep_colleague_mapping_and_back_only_stops_process(probe,backend):
+    for key,field,value in [('a','btn_10',11),('b','btn_1',2),('x','btn_9',1),('y','btn_10',12)]:
+        msg=probe([set(),{key}],backend)[-1]
         assert getattr(msg,field)==value
-    msg=probe([{'lb','rt','a','view'}])[-1]
-    assert msg.btn_8==2 and msg.btn_2==1
+    msg=probe([set(),{'back'}],backend)[-1]
+    assert msg.system_actions==['system.stop']
+    assert msg.btn_2==0  # Back/View retains upstream process-stop semantics.
+    msg=probe([set(),{'rb','a'}],backend)[-1]
+    assert msg.btn_2==1 and msg.system_actions==[]
+
+
+@pytest.mark.parametrize('stage',['dance','sonic06','sonic11'])
+@pytest.mark.parametrize('backend',['gamepad','crsf'])
+def test_original_rb_a_cancels_pending_model_resource_load(monkeypatch,probe,stage,backend):
+    sm,states,ctx,frames,tick=machine(monkeypatch,include_zero=True)
+    resource=states[stage].required_resources[0]
+    resource.status='loading'
+    a=adapter();guard=module('mods/com.bxi.execution_suite/remote_guard.py','pending_guard').SuiteRemoteGuard()
+    face={'dance':'a','sonic06':'x','sonic11':'y'}[stage]
+    for msg in probe([set(),{'lb','rt',face}],backend):
+        for event in guard(msg,a.extract_events(msg),sm.current_state_name):tick(event)
+    assert sm.snapshot()['preparing'] is not None
+    # No intermediate neutral message: the original zero shortcut must still
+    # preempt the model's release interlock and cancel pending preparation.
+    for msg in probe([{'rb','a'}],backend):
+        for event in guard(msg,a.extract_events(msg),sm.current_state_name):tick(event)
+    tick()
+    assert sm.current_state_name=='com.bxi.basic_actions/zero_torque'
+    assert sm.snapshot()['preparing'] is None and states[stage].policy.steps==0
+    assert np.all(frames[-1].kp==0) and np.all(frames[-1].kd==0)
+
+
+def test_selected_upstream_outputs_are_reserved_and_only_claimed_by_model_tests():
+    selected={'dance':19,'sonic06':21,'sonic11':22}
+    config=yaml.safe_load((ROOT/'mods/com.bxi.execution_suite/mod.yaml').read_text())
+    for event,value in selected.items():
+        assert config['events'][event]=={'slot':'btn_10','value':value}
+    for path in (ROOT/'mods').glob('*/mod.yaml'):
+        if path.parent.name=='com.bxi.execution_suite':continue
+        events=yaml.safe_load(path.read_text()).get('events',{})
+        assert not any(b.get('slot')=='btn_10' and b.get('value') in selected.values()
+                       for b in events.values()),path
 
 
 @pytest.mark.parametrize('face,stage',[('a','dance'),('x','sonic06'),('y','sonic11')])
@@ -135,16 +175,15 @@ def test_one_failed_model_does_not_start_or_lock_the_next_manual_test(monkeypatc
     assert states['sonic06'].result=='playback_complete' and sm.current_state_name==NORMAL
 
 
-def test_original_mods_and_remote_cpp_are_byte_identical_to_official():
+def test_original_mods_and_entire_remote_package_match_updated_official():
     import hashlib
     workspace=ROOT.parents[1]
-    tracked=subprocess.check_output(['git','ls-tree','-r','--name-only','e1d412f',
+    tracked=subprocess.check_output(['git','ls-tree','-r','--name-only','f3ba2c4',
         'src/bxi_example_py_elf3/mods','src/remote_controller'],cwd=workspace,text=True).splitlines()
     for filename in tracked:
-        if filename=='src/remote_controller/config/xbox_default.yaml':continue
         if Path(filename).suffix not in ('.py','.yaml','.cpp','.hpp','.txt','.md','.sh','.xml'):
             continue  # Partial clones can omit unchanged external model blobs.
-        expected=subprocess.check_output(['git','show','e1d412f:'+filename],cwd=workspace)
+        expected=subprocess.check_output(['git','show','f3ba2c4:'+filename],cwd=workspace)
         path=workspace/filename
         actual=str(path.readlink()).encode() if path.is_symlink() else path.read_bytes()
         assert hashlib.sha256(actual).digest()==hashlib.sha256(expected).digest(),filename

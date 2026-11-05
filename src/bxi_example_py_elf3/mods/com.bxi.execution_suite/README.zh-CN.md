@@ -6,17 +6,17 @@
 ## 手柄流程
 
 1. 完成原启动流程，按 `RB+X` 进入 `normal` 走路状态；不需要运行悬挂 B 测试。
-   如需自动前后行走，原 `LB+RB+X` 对应 `btn_5=1`。
-2. `LB+RT+A`：控制程序收到 `btn_6=3`，执行 CXK。
-3. `LB+RT+X`：控制程序收到 `btn_6=4`，执行 SONIC 06。
-4. `LB+RT+Y`：控制程序收到 `btn_6=5`，执行 SONIC 11。
+   如需自动前后行走，原 `LB+RB+X` 对应 `btn_10=9`。
+2. `LB+RT+A`：控制程序收到 `btn_10=19`，执行 CXK。
+3. `LB+RT+X`：控制程序收到 `btn_10=21`，执行 SONIC 06。
+4. `LB+RT+Y`：控制程序收到 `btn_10=22`，执行 SONIC 11。
 5. 每个动作完成后自动回 `normal`，下一项由测试者单独选择。
 
-按键只在普通入口 [`remote_controller/config/xbox_default.yaml`](../../../remote_controller/config/xbox_default.yaml) 中配置，不新增遥控器 YAML；遥控器 C++ 包不承担这三组映射逻辑。View/Back（实测 `js.button.10`）在同一普通 YAML 中映射为零力矩请求；`RB+X` 随时中止并回 normal。
+复用同事 `f3ba2c4` 的 [`remote_controller/config/xbox_default.yaml`](../../../remote_controller/config/xbox_default.yaml)，文件保持逐字节一致；控制器只认领其中预留的 `btn_10=19/21/22`。`RB+A` 沿用原零力矩，`RB+X` 中止并回normal；Back/View沿用官方停止程序行为。
 
 ## 日志和精度
 
-日志直接进入已有 `test_*_elf.log`，不创建独立日志文件。模型 Mod 输出：
+日志直接进入已有 `*_elf.log`，不创建独立日志文件。模型 Mod 输出：
 
 ```text
 MODEL_TEST ... PASS paired=... targets=... coverage=... worst_joint_deg=...
@@ -41,9 +41,12 @@ MODEL_TEST ... ABORTED ...
 
 实际单点误差超过20°时终止该动作并回normal；MAE/RMSE/P95在动作结束后统计。缺失反馈和不安全姿态保留零力矩保护，原IMU锁定保护优先。完整的1000Hz反馈与三组角度曲线仍以eval离线报告为准。
 
-## 本轮验证（2026-11-04）
+对齐的官方版本为 `f3ba2c47be3cd7f6be97d4387f8a4a602b1bc246`；原有Mod与整个遥控器包均采用该版本，不新增业务映射或遥控配置文件。
 
-- Python回归218项通过：含三组组合键全部按下/松开顺序、走路入口、逐项等待、入场/执行/退场中止、真实SONIC解码、已知角差、缺项/重复/时钟异常和温度保护。
-- 原遥控器两项C++行为测试及cppcheck通过；两个ROS包构建成功。
-- 原有躺下动作资产测试1项未运行：本地部分克隆未带 `lie_down.onnx`；xmllint在线XSD校验受网络限制。未连接、部署或操控真机。
-- `git diff e1d412f -- src/bxi_example_py_elf3/mods/com.bxi.basic_actions src/bxi_example_py_elf3/mods/com.bxi.suspended_tests` 为空；`remote_controller` 仅普通 `xbox_default.yaml` 有差异。
+## 本轮验证（2026-11-05）
+
+- 247项Python回归通过；原有躺下动作资产测试1项因本地缺文件未运行。
+- 两个ROS包构建成功，4项官方遥控器行为测试通过（含模拟进程停止测试，未停止真实进程）。
+- 验证有线手柄与CRSF两条输入路径，覆盖三组动作按下/松开顺序、RB+X返回、RB+A在资源准备/入场/执行/退场时进入真实零力矩状态。
+- 与官方 `f3ba2c4` 比较，`src/remote_controller`（含YAML）和原有 `basic_actions`、`suspended_tests` 均无差异；本测试未创建新的物理按键组合。
+- 未连接或部署真机。

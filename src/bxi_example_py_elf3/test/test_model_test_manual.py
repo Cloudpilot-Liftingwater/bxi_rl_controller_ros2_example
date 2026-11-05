@@ -74,17 +74,23 @@ def machine(monkeypatch, *, include_zero=False, initial_state=NORMAL):
         zero=zero_module.ZeroTorqueState('com.bxi.basic_actions/zero_torque',2)
         zero._bind_logger(Logger());factories[zero.name]=zero
     config=dict(initial_state=initial_state,graph={'validate':False},default_transition='instant',
-                transition_profiles={'instant':{'type':'instant'}},states={n:{} for n in factories})
-    manifest=yaml.safe_load((ROOT/'mods/com.bxi.execution_suite/mod.yaml').read_text())
-    for route in manifest['routes']:
-        src=route['from'] if '/' in route['from'] else PREFIX+route['from']
-        dst=route['to'] if '/' in route['to'] else PREFIX+route['to']
-        if src not in factories or dst not in factories:continue
-        event=route['event'] if '/' in route['event'] else PREFIX+route['event']
-        config['states'][src].setdefault('transitions',{}).setdefault('on_event',{})[event]=dict(to=dst,transition=route.get('transition','instant'))
-    for action in manifest['actions']:
-        src=PREFIX+action['from']
-        config['states'][src].setdefault('transitions',{}).setdefault('on_event',{})[action['event']]={'action':action['action']}
+                transition_profiles={'instant':{'type':'instant'},
+                                     'soft_switch':{'type':'hold','duration':.02}},
+                states={n:{} for n in factories})
+    for mod in ('basic_actions','execution_suite'):
+        prefix='com.bxi.'+mod+'/'
+        manifest=yaml.safe_load((ROOT/f'mods/com.bxi.{mod}/mod.yaml').read_text())
+        for route in manifest['routes']:
+            src=route['from'] if '/' in route['from'] else prefix+route['from']
+            dst=route['to'] if '/' in route['to'] else prefix+route['to']
+            if src not in factories or dst not in factories:continue
+            event=route['event'] if '/' in route['event'] else prefix+route['event']
+            config['states'][src].setdefault('transitions',{}).setdefault('on_event',{})[event]=dict(to=dst,transition=route.get('transition','instant'))
+        for action in manifest.get('actions',[]):
+            src=action['from'] if '/' in action['from'] else prefix+action['from']
+            if src not in factories:continue
+            event=action['event'] if '/' in action['event'] else prefix+action['event']
+            config['states'][src].setdefault('transitions',{}).setdefault('on_event',{})[event]={'action':action['action']}
     ctx.last_motor_frame=MotorFrame.create(ctx.robot_layout,np.zeros(29),np.full(29,10),np.ones(29))
     def resolve(frame,out):return out.update(frame.qpos,frame.kp,frame.kd,vel=frame.vel,torque=frame.torque)
     ctx.resolve_motor_frame=resolve
