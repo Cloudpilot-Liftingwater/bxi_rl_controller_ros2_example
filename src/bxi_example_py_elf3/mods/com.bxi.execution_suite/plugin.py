@@ -127,15 +127,15 @@ def create_mod(context):
         root=Path(os.environ.get('BXI_CXK_ROOT') or '/data/ros2_ws/备份/com.bxi.cxk')/'assets'
         return dance_policy.load_dance_policy(root/'cxkv5.npz',root/'cxkv5_15k.onnx',
                                              variant='gravity_isaaclab_v3',start_frame=0,fixed_pos=True)
-    startup='startup' if os.environ.get('BXI_EXECUTION_SUITE')=='1' else 'on_demand'
+    standalone=os.environ.get('BXI_EXECUTION_SUITE')=='1'
+    startup='startup' if standalone else 'on_demand'
     key=ResourceKey(PREFIX+'dance_policy');context.register_resource(key,load_cxk,policy=startup);handles['dance']=context.resource(key)
     for clip in ('06','11'):
         key=ResourceKey(PREFIX+'sonic'+clip+'_policy')
         context.register_resource(key,lambda resource,clip=clip:SonicFilePolicy(
             resource.asset('assets/sonic'+clip+'.npz'),clip_id=clip,logger=_SilentLogger()),policy=startup)
         handles['sonic'+clip]=context.resource(key)
-    return ModDefinition(remote_event_filter=guard_module.SuiteRemoteGuard(
-        isolate=False),
+    return ModDefinition(remote_event_filter=guard_module.SuiteRemoteGuard(isolate=standalone),
         transition_plugins={CxkEntryTransition.type_name:CxkEntryTransition,
                             ModelEntryTransition.type_name:ModelEntryTransition},
         state_factories={stage:lambda state,stage=stage:SuiteMotion(

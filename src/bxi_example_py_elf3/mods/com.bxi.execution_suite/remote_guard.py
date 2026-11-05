@@ -1,9 +1,11 @@
-"""Rearm suite requests only after shoulder/face buttons return to neutral.
+"""Keep button release transients from dispatching another model or legacy action.
 
 The same protocol is used by keyboard and gamepad. Inspect raw slots even
 when an earlier Mod filter removed an unavailable request. Escape to normal
 or zero torque always remains available; this filter never creates events.
 """
+
+import time
 
 _NORMAL = "com.bxi.basic_actions/normal"
 _FORWARD_BACK = "com.bxi.basic_actions/forward_back"
@@ -16,57 +18,52 @@ _ESCAPES = frozenset({
 })
 _SUITE = "com.bxi.execution_suite/"
 _MODELS = frozenset(_SUITE + stage for stage in ("dance", "sonic06", "sonic11"))
-_MODEL_OUTPUTS = frozenset((19, 21, 22))
-
-
-def allowed_test_events(state):
-    """Remote input allowlist; internal fault/IMU transitions remain untouched."""
-    if state in ("com.bxi.basic_actions/pd_brake", "com.bxi.basic_actions/zero_torque"):
-        allowed = {"com.bxi.basic_actions/pd_brake"}
-        if state.endswith("/pd_brake"):
-            allowed.add(_NORMAL)
-        return allowed | (_ESCAPES - {_NORMAL})
-    if state in (_NORMAL, _FORWARD_BACK):
-        return _MODELS | _ESCAPES
-    if state in _MODELS or state == "com.bxi.dance_test/dance":
-        return _ESCAPES
-    return _ESCAPES - {_NORMAL}
+_MODEL_OUTPUTS = frozenset((31, 33, 34))
+_WALKING = frozenset({_NORMAL, _FORWARD_BACK})
+_WALKING_TEST_EVENTS = _MODELS | _ESCAPES | {
+    _FORWARD_BACK, "com.bxi.basic_actions/pd_brake",
+}
+_RELEASE_SECONDS = 0.15
 
 
 class SuiteRemoteGuard:
-    def __init__(self, *, isolate=False):
+    def __init__(self, *, isolate=False, clock=time.monotonic):
         self._awaiting_release = False
         self._isolate = isolate
+        self._clock = clock
+        self._neutral_since = None
 
     def __call__(self, message, events, current_state):
-        if self._isolate:
-            allowed = allowed_test_events(current_state)
-            events = [event for event in events if event in allowed]
         neutral = all(
             int(getattr(message, f"btn_{slot}", 0)) == 0
             for slot in range(1, 11)
         )
+        if self._awaiting_release:
+            now = self._clock()
+            if self._neutral_since is not None and now - self._neutral_since >= _RELEASE_SECONDS:
+                self._awaiting_release = False
+            if neutral and self._awaiting_release and self._neutral_since is None:
+                self._neutral_since = now
         if neutral:
-            self._awaiting_release = False
             return list(events)
+        self._neutral_since = None
 
         suite_request = int(getattr(message, "btn_10", 0)) in _MODEL_OUTPUTS
-        # Leave ordinary official controls alone outside suite requests/states.
-        if not (self._isolate or self._awaiting_release or suite_request
-                or current_state.startswith("com.bxi.execution_suite/")
-                or current_state == _FORWARD_BACK):
-            return list(events)
-        escapes = [event for event in events if event in _ESCAPES]
-        if escapes:
-            # Explicit zero torque wins over normal and any pending model.
+        in_model = current_state in _MODELS
+        from_walking = current_state in _WALKING
+        if self._isolate and from_walking:
+            events = [event for event in events if event in _WALKING_TEST_EVENTS]
+        if self._awaiting_release or in_model or (suite_request and from_walking):
+            escapes = [event for event in events if event in _ESCAPES]
+            if escapes:
+                self._awaiting_release = True
+                # Zero torque preempts any pending or active model immediately.
+                for stop in (_ZERO, _EXIT_TEST):
+                    if stop in escapes:
+                        return [stop]
+                return escapes
+            if self._awaiting_release or in_model:
+                return []
             self._awaiting_release = True
-            for stop in ("com.bxi.suspended_tests/exit_test_mode", "com.bxi.basic_actions/zero_torque"):
-                if stop in escapes:
-                    return [stop]
-            return escapes
-        if self._awaiting_release:
-            return []
-
-        if suite_request:
-            self._awaiting_release = True
+            return [event for event in events if event in _MODELS]
         return list(events)

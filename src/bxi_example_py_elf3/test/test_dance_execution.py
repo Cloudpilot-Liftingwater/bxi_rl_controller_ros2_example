@@ -99,7 +99,7 @@ def test_dance_routes_are_separate_and_have_cancel_and_safety():
     assert any(r.get('action')=='cancel' for r in config['actions'])
     assert any(r.get('to')=='com.bxi.basic_actions/zero_torque' for r in config['routes'])
     remote=yaml.safe_load((ROOT.parent/'remote_controller/config/xbox_default.yaml').read_text())
-    assert {r['output'] for r in remote['outputs']['level']} >= {'btn_10=19','btn_10=21','btn_10=22'}
+    assert {r['output'] for r in remote['outputs']['level']} >= {'btn_10=31','btn_10=33','btn_10=34'}
 
 
 def test_all_builtin_mod_manifests_compile_together_without_input_conflicts(monkeypatch):

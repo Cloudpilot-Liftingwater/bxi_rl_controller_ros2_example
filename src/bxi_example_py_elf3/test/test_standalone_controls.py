@@ -14,6 +14,15 @@ from test_execution_suite import module
 from test_model_test_manual import machine, reach_motion_phase, NORMAL, PREFIX, ROOT
 
 REMOTE=ROOT.parent/'remote_controller'
+LEGACY_BINDINGS={
+    'com.bxi.cxk/activate3': {'slot':'btn_10','value':19},
+    'com.bxi.cxk/activate_original': {'slot':'btn_10','value':22},
+    'com.bxi.normal_depth/activate': {'slot':'btn_10','value':7},
+    'com.bxi.ballet/activate': {'slot':'btn_10','value':3},
+    'com.bxi.back_flip/activate': {'slot':'btn_10','value':1},
+    'com.bxi.forward_flip/activate': {'slot':'btn_10','value':2},
+    'com.bxi.basic_actions/hello': {'slot':'btn_10','value':6},
+}
 
 
 @pytest.fixture(scope='module')
@@ -39,8 +48,8 @@ def probe(tmp_path_factory):
     return read
 
 
-def adapter():
-    events={}
+def adapter(extra_events=None):
+    events=dict(extra_events or {})
     for name in ('basic_actions','suspended_tests','execution_suite'):
         config=yaml.safe_load((ROOT/f'mods/com.bxi.{name}/mod.yaml').read_text())
         events.update({f'com.bxi.{name}/'+key:binding for key,binding in config['events'].items()})
@@ -50,24 +59,42 @@ def adapter():
 @pytest.mark.parametrize('face,stage',[('a','dance'),('x','sonic06'),('y','sonic11')])
 @pytest.mark.parametrize('backend',['gamepad','crsf'])
 def test_all_native_press_release_orders_select_once_and_never_trigger_release_actions(probe,face,stage,backend):
-    for press in permutations(('lb','rt',face)):
-        for release in permutations(('lb','rt',face)):
+    for press in permutations(('lt','rt',face)):
+        for release in permutations(('lt','rt',face)):
             snapshots=[set()]; held=set()
             for key in press:
                 held.add(key);snapshots.append(set(held))
             for key in release:
                 held.remove(key);snapshots.append(set(held))
-            guard=module('mods/com.bxi.execution_suite/remote_guard.py','native_guard').SuiteRemoteGuard()
-            a=adapter(); selected=[];requested=False
+            guard=module('mods/com.bxi.execution_suite/remote_guard.py','native_guard').SuiteRemoteGuard(isolate=True)
+            a=adapter(LEGACY_BINDINGS); selected=[]
             for msg in probe(snapshots,backend):
                 # Include the case where a short motion finished before the
                 # initiating keys were released: guard must protect normal.
                 events=guard(msg,a.extract_events(msg),NORMAL)
-                if PREFIX+stage in events:
-                    requested=True;selected.append(PREFIX+stage)
-                if requested:
-                    assert not set(events)&{'com.bxi.basic_actions/recover','com.bxi.basic_actions/lie_down'}
+                selected.extend(events)
             assert selected==[PREFIX+stage]
+
+
+def test_old_cxk_bindings_still_work_outside_standalone_without_selecting_tests(probe):
+    a=adapter(LEGACY_BINDINGS)
+    guard=module('mods/com.bxi.execution_suite/remote_guard.py','standard_guard').SuiteRemoteGuard()
+    events=[]
+    for msg in probe([set(),{'lb','rt','a'},set(),{'lb','rt','y'},set()]):
+        events.extend(guard(msg,a.extract_events(msg),NORMAL))
+    assert events==['com.bxi.cxk/activate3','com.bxi.cxk/activate_original']
+
+
+def test_short_zero_dropouts_and_partial_release_do_not_retrigger_model(probe):
+    a=adapter(LEGACY_BINDINGS)
+    now=0.
+    guard=module('mods/com.bxi.execution_suite/remote_guard.py','rearm_guard').SuiteRemoteGuard(clock=lambda:now)
+    events=[]
+    samples=[(0.,{'lt','rt','y'}),(.02,set()),(.08,{'lt','rt','y'}),
+             (.09,{'rt','y'}),(.1,set()),(.3,{'lt','rt','a'})]
+    for (now,_),msg in zip(samples,probe([keys for _,keys in samples]),strict=True):
+        events.extend(guard(msg,a.extract_events(msg),NORMAL))
+    assert events==[PREFIX+'sonic11',PREFIX+'dance']
 
 
 @pytest.mark.parametrize('stage',['dance','sonic06','sonic11'])
@@ -110,7 +137,7 @@ def test_original_rb_a_cancels_pending_model_resource_load(monkeypatch,probe,sta
     resource.status='loading'
     a=adapter();guard=module('mods/com.bxi.execution_suite/remote_guard.py','pending_guard').SuiteRemoteGuard()
     face={'dance':'a','sonic06':'x','sonic11':'y'}[stage]
-    for msg in probe([set(),{'lb','rt',face}],backend):
+    for msg in probe([set(),{'lt','rt',face}],backend):
         for event in guard(msg,a.extract_events(msg),sm.current_state_name):tick(event)
     assert sm.snapshot()['preparing'] is not None
     # No intermediate neutral message: the original zero shortcut must still
@@ -124,7 +151,7 @@ def test_original_rb_a_cancels_pending_model_resource_load(monkeypatch,probe,sta
 
 
 def test_selected_upstream_outputs_are_reserved_and_only_claimed_by_model_tests():
-    selected={'dance':19,'sonic06':21,'sonic11':22}
+    selected={'dance':31,'sonic06':33,'sonic11':34}
     config=yaml.safe_load((ROOT/'mods/com.bxi.execution_suite/mod.yaml').read_text())
     for event,value in selected.items():
         assert config['events'][event]=={'slot':'btn_10','value':value}
@@ -139,7 +166,7 @@ def test_selected_upstream_outputs_are_reserved_and_only_claimed_by_model_tests(
 def test_start_from_forward_back_and_wait_in_normal_after_one_motion(monkeypatch,probe,face,stage):
     sm,states,ctx,frames,tick=machine(monkeypatch,initial_state='com.bxi.basic_actions/forward_back')
     a=adapter();guard=module('mods/com.bxi.execution_suite/remote_guard.py','walk_guard').SuiteRemoteGuard()
-    for msg in probe([set(),{'lb','rt',face},set()]):
+    for msg in probe([set(),{'lt','rt',face},set()]):
         for event in guard(msg,a.extract_events(msg),sm.current_state_name):tick(event)
     for _ in range(240):tick()
     assert states[stage].result=='playback_complete'

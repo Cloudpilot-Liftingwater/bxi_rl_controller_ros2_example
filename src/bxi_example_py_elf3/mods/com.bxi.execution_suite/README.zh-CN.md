@@ -7,12 +7,14 @@
 
 1. 完成原启动流程，按 `RB+X` 进入 `normal` 走路状态；不需要运行悬挂 B 测试。
    如需自动前后行走，原 `LB+RB+X` 对应 `btn_10=9`。
-2. `LB+RT+A`：控制程序收到 `btn_10=19`，执行 CXK。
-3. `LB+RT+X`：控制程序收到 `btn_10=21`，执行 SONIC 06。
-4. `LB+RT+Y`：控制程序收到 `btn_10=22`，执行 SONIC 11。
+2. `LT+RT+A`：控制程序收到 `btn_10=31`，执行 CXK。
+3. `LT+RT+X`：控制程序收到 `btn_10=33`，执行 SONIC 06。
+4. `LT+RT+Y`：控制程序收到 `btn_10=34`，执行 SONIC 11。
 5. 每个动作完成后自动回 `normal`，下一项由测试者单独选择。
 
-复用同事 `f3ba2c4` 的 [`remote_controller/config/xbox_default.yaml`](../../../remote_controller/config/xbox_default.yaml)，文件保持逐字节一致；控制器只认领其中预留的 `btn_10=19/21/22`。`RB+A` 沿用原零力矩，`RB+X` 中止并回normal；Back/View沿用官方停止程序行为。
+先按住两个扳机，再点按对应字母键。先松字母键，再松扳机。连续松开至少 150 毫秒后才接受下一次测试。显式启用独立测试入口时，走路状态只接收模型测试、走路和原安全操作，防止组合键半按时启动其他动作。
+
+复用同事 `f3ba2c4` 的 [`remote_controller/config/xbox_default.yaml`](../../../remote_controller/config/xbox_default.yaml)，文件保持逐字节一致，控制器只认领预留的 `btn_10=31/33/34`。`RB+A` 沿用原零力矩，`RB+X` 中止并回 `normal`，Back/View 沿用官方停止程序行为。
 
 ## 日志和精度
 

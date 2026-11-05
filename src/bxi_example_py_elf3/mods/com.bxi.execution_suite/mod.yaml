@@ -15,9 +15,9 @@ runtime_requirements:
 requires: [com.bxi.basic_actions, com.bxi.suspended_tests, com.bxi.dance_test]
 events:
   # Reuse the colleague's reserved outputs in xbox_default.yaml unchanged.
-  dance: {slot: btn_10, value: 19}    # LB+RT+A
-  sonic06: {slot: btn_10, value: 21}  # LB+RT+X
-  sonic11: {slot: btn_10, value: 22}  # LB+RT+Y
+  dance: {slot: btn_10, value: 31}    # LT+RT+A
+  sonic06: {slot: btn_10, value: 33}  # LT+RT+X
+  sonic11: {slot: btn_10, value: 34}  # LT+RT+Y
 states:
   dance: {manifest: {label: CXK跟踪测试, group: Tests}}
   sonic06: {manifest: {label: SONIC06跟踪测试, group: Tests}}
