@@ -30,6 +30,18 @@ MODEL_TEST ... ABORTED ...
 
 比较对象是 `q_actual - q_model`。当前初筛门槛为 MAE≤3°、RMSE≤5°、P95≤10°、最大误差≤20°；完整曲线和三组角度仍由 `elf3-eval` 离线报告输出。
 
+### 自动保存完整曲线（eval 0.5.0 起）
+
+普通真机入口在 `BXI_EXECUTION_SUITE=1` 时会同时启动被动自动记录器，无需第二个记录终端。
+手柄仍逐项选择动作；每段完成、中止或故障后自动保存原始数据，并由独立低优先级进程生成报告。
+开始/报告完成/错误信息沿用同一个 `*_elf.log`；记录失败不会切换机器人状态。
+普通走路时只缓存最多1秒/2048条数据，不持续写盘；动作前后缓冲不参与该动作的精度评分。
+
+输出根目录默认 `/var/log/bxi_log/execution_eval`，可用 `ELF3_EVAL_OUTPUT` 修改。
+每次动作保存在 `session_*/run_*/`，`report_status.json` 给出 HTML 报告路径或失败原因。
+机器人编号从现有 `robot_config_file` 读取；不创建遥控 YAML，不修改手柄映射。
+需要保留手动录制时设置 `ELF3_EVAL_AUTO_RECORD=0`，避免两个记录器占用同一 socket。
+
 ## 代码边界
 
 - `com.bxi.execution_suite`：测试状态、路由和模型资源。

@@ -5,7 +5,7 @@ import sys
 
 from ament_index_python.packages import get_package_share_path
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, ExecuteProcess
 from launch.substitutions import LaunchConfiguration, EnvironmentVariable
 from launch.actions import OpaqueFunction
 from launch_ros.actions import Node
@@ -16,6 +16,28 @@ from bxi_example_py_elf3.framework.mod_api.hardware_launch import (
 
 LOCK_FILE = "/tmp/bxi_example_hw.lock"
 _lock_fd = None
+
+
+def _automatic_recording(context):
+    """Own a passive recorder with this launch; reuse the ordinary remote Start."""
+    def value(name):
+        return LaunchConfiguration(name).perform(context)
+    if value('execution_eval_auto_record') != '1' or value('execution_eval') != '1':
+        return []
+    import yaml
+    with open(value('robot_config_file'), encoding='utf-8') as stream:
+        robot_id = yaml.safe_load(stream).get('robot_id')
+    if robot_id is None:
+        raise ValueError('Automatic evaluation requires robot_id in the robot configuration')
+    return [ExecuteProcess(
+        cmd=[sys.executable, '-m', 'elf3_eval.cli', 'auto-record',
+             '--output', value('execution_eval_output'),
+             '--robot-id', 'ELF3-' + str(robot_id),
+             '--address', value('execution_eval_socket')],
+        output='screen', sigterm_timeout='15', sigkill_timeout='5',
+        additional_env={'PYTHONUNBUFFERED': '1', 'OPENBLAS_NUM_THREADS': '1',
+                        'OMP_NUM_THREADS': '1', 'MKL_NUM_THREADS': '1'},
+    )]
 
 
 def _release_lock():
@@ -125,10 +147,23 @@ def generate_launch_description():
                 default_value=EnvironmentVariable("ELF3_EVAL_SOCKET", default_value="elf3_model_eval_v1"),
             ),
             DeclareLaunchArgument(
+                'execution_eval_auto_record',
+                default_value=EnvironmentVariable('ELF3_EVAL_AUTO_RECORD',
+                                                   default_value=LaunchConfiguration('execution_suite')),
+                choices=['0', '1'],
+                description='Automatically capture and report each selected model test',
+            ),
+            DeclareLaunchArgument(
+                'execution_eval_output',
+                default_value=EnvironmentVariable('ELF3_EVAL_OUTPUT',
+                                                   default_value='/var/log/bxi_log/execution_eval'),
+            ),
+            DeclareLaunchArgument(
                 "imu_runtime_timeout_sec",
                 default_value="0.1",
                 description="Seconds without IMU data before locked protection",
             ),
+            OpaqueFunction(function=_automatic_recording),
             OpaqueFunction(
                 function=lambda context: [hardware_node_from_context(context)]
             ),

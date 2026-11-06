@@ -63,3 +63,23 @@ def test_original_hardware_launcher_explicitly_selects_manual_hardware_without_v
     assert all("/simulation_release_on_normal" not in parameter for parameter in nodes[0].parameters)
     assert any(isinstance(entity, DeclareLaunchArgument) and entity.name == "execution_suite"
                for entity in description.entities)
+
+
+@pytest.mark.parametrize('enabled', ['0', '1'])
+def test_ordinary_hardware_start_owns_automatic_passive_recorder(monkeypatch, tmp_path, enabled):
+    from launch import LaunchContext
+    launch = launch_module('example_demo_hw.launch.py')
+    monkeypatch.setattr(launch, 'ExecuteProcess', lambda **kw: NS(**kw))
+    config = tmp_path/'robot.yaml'
+    config.write_text("robot_id: '58'\n")
+    context = LaunchContext()
+    context.launch_configurations.update(execution_eval_auto_record=enabled, execution_eval='1',
+        robot_config_file=str(config), execution_eval_output='/tmp/eval-runs', execution_eval_socket='test_socket')
+    processes = launch._automatic_recording(context)
+    assert len(processes) == int(enabled)
+    if processes:
+        process = processes[0]
+        assert process.cmd[1:5] == ['-m', 'elf3_eval.cli', 'auto-record', '--output']
+        assert 'ELF3-58' in process.cmd and 'test_socket' in process.cmd
+        assert process.output == 'screen'  # existing *_elf.log redirection
+        assert 'OPENBLAS_NUM_THREADS' in process.additional_env
