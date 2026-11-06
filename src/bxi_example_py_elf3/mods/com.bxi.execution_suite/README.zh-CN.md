@@ -12,6 +12,8 @@
 4. `LT+RT+Y`：控制程序收到 `btn_10=34`，执行 SONIC 11。
 5. 每个动作完成后自动回 `normal`，下一项由测试者单独选择。
 
+CXK、SONIC06、SONIC11 从 `normal` 或 `forward_back` 进入时，真机和仿真的入场过渡均为 **0.3秒**。
+
 先按住两个扳机，再点按对应字母键。先松字母键，再松扳机。连续松开至少 150 毫秒后才接受下一次测试。显式启用独立测试入口时，走路状态只接收模型测试、走路和原安全操作，防止组合键半按时启动其他动作。
 
 复用同事 `f3ba2c4` 的 [`remote_controller/config/xbox_default.yaml`](../../../remote_controller/config/xbox_default.yaml)，文件保持逐字节一致，控制器只认领预留的 `btn_10=31/33/34`。`RB+A` 沿用原零力矩，`RB+X` 中止并回 `normal`，Back/View 沿用官方停止程序行为。
