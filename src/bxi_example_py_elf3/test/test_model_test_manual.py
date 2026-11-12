@@ -14,7 +14,6 @@ from bxi_example_py_elf3.model_test_safety import ModelTemperatureGuard
 from bxi_example_py_elf3.policies.joints import ELF3_POLICY_JOINTS
 from test_dance_execution import Logger, context
 from test_execution_suite import module
-from test_model_accuracy import publish
 
 ROOT=Path(__file__).resolve().parents[1]
 NORMAL='com.bxi.basic_actions/normal'
@@ -183,22 +182,32 @@ def test_each_completed_clip_waits_for_operator_and_can_be_repeated(monkeypatch)
         assert sm.current_state_name==NORMAL
 
 
-@pytest.mark.parametrize('topic,expected', [('simulation/','running'),('hardware/','failed')])
-def test_sim2sim_records_overlimit_sample_while_hardware_stops(monkeypatch,topic,expected):
-    _,_,states,ctx,frames,requests=setup_suite(monkeypatch,topic)
-    state=states['dance']
+@pytest.mark.parametrize('topic', ['simulation/', 'hardware/'])
+@pytest.mark.parametrize('stage', ['dance', 'sonic06', 'sonic11'])
+def test_overlimit_error_is_scored_after_full_playback(monkeypatch, topic, stage):
+    _, _, states, ctx, frames, requests = setup_suite(monkeypatch, topic)
+    state = states[stage]
     state.on_enter(ctx)
     try:
-        publish(state._accuracy,1.,q=np.radians(25.))
-        ctx.robot_joints.timestamp_ns=1_010_000_000
-        state.on_update(ctx,.02)
-        assert state.result==expected
-        assert state._accuracy.samples==1
-        assert np.max(np.abs(state._accuracy.errors[0]))==pytest.approx(25.)
-        if topic=='hardware/':
-            assert not frames and requests[-1][1]['trigger']=='dance_safety_fault'
-        else:
-            assert frames and not requests
+        state.policy.frames = 121
+        joint = 'r_ankle_y_joint'
+        ctx.robot_joints.position[ctx.robot_layout.index(joint)] = np.radians(25.)
+        run = state._accuracy
+        for i in range(state.policy.frames):
+            stamp = 1_000_000_000 + i * 20_000_000
+            ctx.robot_joints.timestamp_ns = stamp
+            state.on_update(ctx, .02)
+            if i < state.policy.frames - 1:
+                assert state.result == 'running' and not requests
+                sec, nanosec = divmod(stamp, 1_000_000_000)
+                run.command_published(NS(header=NS(stamp=NS(sec=sec, nanosec=nanosec))), state.name)
+        assert len(frames) == state.policy.frames
+        assert state.result == 'playback_complete'
+        assert [(target, kw['trigger']) for target, kw in requests] == [(NORMAL, 'dance_playback_complete')]
+        run.worker.join(5)
+        assert run.report['paired'] == 120
+        assert run.report['status'] == 'FAIL'
+        assert run.report['joints'][joint]['maximum'] == pytest.approx(25.)
     finally:
         state.on_exit(ctx)
 

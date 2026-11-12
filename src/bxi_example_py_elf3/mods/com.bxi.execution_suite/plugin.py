@@ -83,9 +83,8 @@ def create_mod(context):
             if self.result=='cancelled':session.cancel(self.stage+' entry cancelled')
         def on_enter(self,ctx):
             self.reported=False;super().on_enter(ctx)
-            if standalone and ctx.ros_node.topic_prefix == 'simulation/':
-                # Keep the whole trace for scoring without a single sample ending playback.
-                self._accuracy.stop_on_maximum = False
+            # Score tracking error over the full clip, including samples above 20 degrees.
+            self._accuracy.stop_on_maximum = False
         def _fail(self,ctx,reason,**details):
             session.abort(self.stage+': '+reason)
             super()._fail(ctx,reason,**details)
