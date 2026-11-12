@@ -8,6 +8,8 @@
 
 运行环境沿用 BXI ROS 2、communication 消息、NumPy、PyYAML，以及模型使用的 ONNX 和 ONNX Runtime。用 `BXI_CXK_ROOT` 指向含 `assets/cxkv5.npz` 和 `assets/cxkv5_15k.onnx` 的 CXK 目录，用 `BXI_SONIC_ROOT` 指向带原版 `policy.py` 和 `assets` 的 SONIC 模型目录。两个选定的动作参考已随 Mod 提供。模型也可以放在本 Mod 的 `assets/cxk` 和 `assets/sonic`。设置 `BXI_EXECUTION_SUITE=1` 可在启动时预加载三个模型，否则首次选择时加载。请保留现有模型权重与解码器的版本配对。
 
+SONIC 06 使用 `ndance-1`（1034 帧，20.68 秒），SONIC 11 使用 `ndance-2`（769 帧，15.38 秒）。两段均按 50 Hz 回放，录制来源及校验值见 `assets/selection.json`。
+
 ## 记录与判定
 
 Mod 自动启动只读记录器。每个动作保留原始事件，结束后在后台生成 `report.html`、`report.json`、`metrics.csv`、`aligned.npz`。输出根目录可用 `ELF3_EVAL_OUTPUT` 指定，硬件默认 `/var/log/bxi_log/execution_eval`，仿真默认 `~/.ros/execution_eval`。每个动作的 `session_*/run_*/report_status.json` 给出报告绝对路径。目录须对控制器用户可写。记录器和分析器继承控制器的标准输出，沿用原有 _elf 日志重定向。
